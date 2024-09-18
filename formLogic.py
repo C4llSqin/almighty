@@ -4,6 +4,7 @@ COLOR_FORE_RED = "\033[31m"
 COLOR_FORE_GREEN = "\033[32m"
 COLOR_FORE_PINK = "\033[35m"
 COLOR_FORE_CYAN = "\033[36m"
+COLOR_FORE_YELLOW = "\033[93m"
 RESET = "\033[0m"
 
 class Awnser:
@@ -25,9 +26,9 @@ class Question(ABC):
         self.points = points
 
     def print_question(self):
-        print(f"{COLOR_FORE_CYAN}{self.name}{RESET}" + 
-              ((COLOR_FORE_RED+"(REQ)"+RESET) * self.required) + 
-              f"{COLOR_FORE_PINK}{self.points}{RESET} (qtype: {self.qtype})")
+        print(f"{COLOR_FORE_CYAN}{self.name}{RESET} " + 
+              ((COLOR_FORE_RED+"(REQ) "+RESET) * self.required) + 
+              f"{COLOR_FORE_PINK}{self.points} pt(s){RESET} (qtype: {self.qtype})")
 
     def get_awnser(self) -> list[Awnser] | str:
         return "OHNO!"
@@ -65,6 +66,7 @@ class MultipleChoiceQuestion(Question):
         i = 0
         for awnser in self.awnsers:
             print(f"{hex(i)}: {awnser.name}")
+            i+=1
 
     def has_manual(self):
         return any([awnser.status==Awnser.MANUAL for awnser in self.awnsers])
@@ -167,6 +169,14 @@ class Section():
         for question in self.questions:
             if question.name == name: return question
         return None
+    
+    def print_section(self):
+        print(f"{COLOR_FORE_CYAN}## Section: {self.name} ##{RESET}")
+        print()
+        for question in self.questions:
+            question.print_question()
+            print()
+        print(f"{COLOR_FORE_CYAN}####{RESET}")
 
 class Form():
     def __init__(self, sections: list[Section] = []) -> None:
@@ -176,3 +186,11 @@ class Form():
         for section in self.sections:
             if section.name == name: return section
         return None
+
+    def print_form(self):
+        print(f"{COLOR_FORE_YELLOW}#### Form ####{RESET}")
+        print()
+        for section in self.sections:
+            section.print_section()
+        print(f"{COLOR_FORE_YELLOW}########{RESET}")
+        
