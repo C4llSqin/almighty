@@ -7,8 +7,19 @@ import re
 import json
 
 XPATH_LISTITEM_POINTVALUE = "div/div/div[1]/div[2]"
-XPATH_LISTITEM_STR_INPUT = "div/div/div[2]/div/div[1]/div/div[1]/input"
-AAAAAAAAAAAAAAAAAAA = "/html/body/div/div[3]/form/div[2]/div/div[2]/div[3]"
+XPATH_LISTITEM_SHORT_STR_INPUT = "div/div/div[2]/div/div[1]/div/div[1]/input"
+XPATH_LISTITEM_LONG_STR_INPUT = "div/div/div[2]/div/div[1]/div[2]/textarea"
+XPATH_LISTITEM_EMAIL_CHECK = "div[1]/label/div"
+XPATH_LISTITEM_MULTI = "div/div/div[2]/div/div/span/div/"
+XPATH_LISTITEM_CHECKBOX = "div/div/div[2]/div[1]/"
+
+XPATH_ROOT_STATUS = "/html/body/div/div[3]/form/div[2]/div/div[3]/div[1]"
+XPATH_STATUS_PROGRESS_TEXT = "div[2]/div[2]"
+XPATH_BUTTON_BUTTON_TEXT = "span/span"
+
+XPATH_VIEW_RESULTS = "/html/body/div[1]/div[2]/div[1]/div/div[4]/div"
+
+XPATH_RESULTS_SCORE = "/html/body/div/div[2]/div[1]/div/div[1]/div/div[2]/div/div[2]/span"
 
 def make_webdriver() -> webdriver.Firefox:
     #todo: make this read a json, and choose profiles.
@@ -45,22 +56,36 @@ def fillout_section(web_driver: webdriver.Firefox, section: Section):
                 question_type = data_pram_json[0][3]
             
                 question = section.search_by_question_title(question_name)
-                assert(question != None, "Missed a Question.")
+                assert (question != None)
                 awnser = question.get_awnser()
+                
                 if question_type == 0 or question_type == 1:
-                    text_box = listitem.find_element(By.XPATH, XPATH_LISTITEM_STR_INPUT)
-                    text_box.click()
-                    text_box.send_keys(awnser)
-                elif question_type == 2 or question_type == 4:
-                    #TODO: look at data_pram_json and determin where the buttons are.
-                    # And then click on the buttons that are in the awnsers array.
-                    ...
+                    text_box = None
+                    if question_type: text_box = listitem.find_element(By.XPATH, XPATH_LISTITEM_LONG_STR_INPUT)
+                    else: text_box = listitem.find_element(By.XPATH, XPATH_LISTITEM_SHORT_STR_INPUT)
                     
+                    text_box.click()
+                    text_box.clear()
+                    text_box.send_keys(awnser)
+                
+                elif question_type == 2 or question_type == 4:
+                    button_order = [values[0] for values in data_pram_json[0][4][0][1]]
+                    for sub_awnser in awnser:
+                        if sub_awnser.name in button_order:
+                            i = button_order.index(sub_awnser.name)
+                            if question_type == 2:
+                                clickable = listitem.find_element(By.XPATH, f"{XPATH_LISTITEM_MULTI}div[{1+i}]")
+                                clickable.click()
+                            if question_type == 4:
+                                clickable = listitem.find_element(By.XPATH, f"{XPATH_LISTITEM_CHECKBOX}div[{1+i}]")
+                                clickable.click()
+                            # clickable.click()
             
         elif child_item != None and child_item.get_dom_attribute("data-user-email-address") != None:
             #Email Checkbox, click on it
             #TODO: find the XPATH to the actual clickable area.
-            listitem.click()
+            clickable = listitem.find_element(By.XPATH, XPATH_LISTITEM_EMAIL_CHECK)
+            clickable.click()
         else:
             print("Not a Question, don't know what it could be")
 
@@ -103,7 +128,7 @@ def scan_listitem(web_element: webelement.WebElement, section: Section):
             
             elif question_type == 4:
                 awnsers = [values[0] for values in data_pram_json[0][4][0][1]]
-                question = MultipleChoiceQuestion(question_name, question_required, question_point_value, awnsers)
+                question = CheckboxQuestion(question_name, question_required, question_point_value, awnsers)
             
             else: raise NotImplemented(f"Question Type {question_type}")
 
@@ -117,20 +142,49 @@ def scan_listitem(web_element: webelement.WebElement, section: Section):
     else:
         print("Not a Question, don't know what it could be")
 
+def progress(web_driver: webdriver.Firefox) -> tuple[bool, tuple[int, int]]:
+    parent = web_driver.find_element(By.XPATH, XPATH_ROOT_STATUS)
+    progress_val = (0,0)
+    if len(parent.find_elements(By.XPATH, '*')) == 3:
+        progress_text_elm = parent.find_element(By.XPATH, XPATH_STATUS_PROGRESS_TEXT)
+        match = re.search(r"Page (.*) of (.*)", progress_text_elm.text)
+        progress_val = (int(match.group(1)), int(match.group(2)))
+        #We have a progress bar
+
+    button_container = web_driver.find_element(By.XPATH, "/html/body/div/div[3]/form/div[2]/div/div[3]/div[1]/div[1]")
+    for button in button_container.find_elements(By.XPATH, '*'):
+        button_text_elm = button.find_element(By.XPATH, XPATH_BUTTON_BUTTON_TEXT)
+        if button_text_elm.text == "Submit":
+            button.click()
+            return (True, progress_val)
+        elif button_text_elm.text == "Next":
+            button.click()
+            return (False, progress_val)
+    raise ValueError("Unable to find the path for progression")
+
 def first_time_scan(web_driver: webdriver.Firefox) -> Form:
     form = Form()
-    while True: #TODO: add logic to prevent trying to add the form results as an section
+    while True:
         section_element = find_list(web_driver)
         section = Section("Root")
         for child_element in section_element.find_elements(By.XPATH, '*'):
             scan_listitem(child_element, section)
         form.sections.append(section)
-        form.print_form()
         fillout_section(web_driver, section)
+        progression = progress(web_driver)
+        print(progression[1])
+        if progression[0]: break
+    form.print_form()
+    clickable = web_driver.find_element(By.XPATH, XPATH_VIEW_RESULTS)
+    #NOTE: the clickable opens in new tab, so extract the link and then goto it
+    link_elm = clickable.find_element(By.XPATH, 'a')
+    link = link_elm.get_dom_attribute("href")
+    web_driver.get(link)
+    # clickable.click()
 
 a = make_webdriver()
-a.get("https://docs.google.com/forms/d/e/1FAIpQLSdARHYqO539l9aJFIHYicuiLyH4SRCHckTwcjGnVqBvO_tYjg/formResponse")
-input("> ")
+a.get(input("formURL> "))
+# input("> ")
 first_time_scan(a)
 input("> ")
 a.close()

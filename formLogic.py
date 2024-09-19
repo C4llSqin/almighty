@@ -50,7 +50,7 @@ class ShortTextQuestion(Question):
             self.val = self._prompt_user()
         return self.val
 
-class LongTextQuestion(Question):
+class LongTextQuestion(ShortTextQuestion):
     qtype = "Long Str"
 
 class MultipleChoiceQuestion(Question):
@@ -77,12 +77,12 @@ class MultipleChoiceQuestion(Question):
         input_req = False #input requested
         auto_available = True
         none_available = False
-        if not self.required and len([awnser for awnser in self.awnsers if awnser.status==Awnser.UNKNOWN]):
+        if not self.required and all([awnser.status==Awnser.UNKNOWN for awnser in self.awnsers]):
             # if not required and first time, so none is available
             input_req = True
             none_available = True
 
-        if not self.points and not len([awnser for awnser in self.awnsers if awnser.status==Awnser.UNKNOWN]):
+        if self.points == 0 and all([awnser.status==Awnser.UNKNOWN for awnser in self.awnsers]):
             # if no points and no manual awnser selected, so auto isn't available
             input_req = True
             auto_available = False
@@ -111,22 +111,24 @@ class MultipleChoiceQuestion(Question):
                 except ValueError:
                     print("Response Invalid, Try again.")
 
-        results = sorted(self.awnsers, lambda awnser: awnser.status)
+        results = sorted(self.awnsers, key=lambda awnser: awnser.status)
         return [results[0]] # return either the correct awnser, an unknown awnser, or a human manual awnser(usually period id).
     
 class CheckboxQuestion(MultipleChoiceQuestion):
+    qtype = "checkbox"
+    
     def get_awnser(self):
         if self.no_awnser: return []
 
         input_req = False #input requested
         auto_available = True
         none_available = False
-        if not self.required and len([awnser for awnser in self.awnsers if awnser.status==Awnser.UNKNOWN]):
+        if not self.required and all([awnser.status==Awnser.UNKNOWN for awnser in self.awnsers]):
             # if not required and first time, so none is available
             input_req = True
             none_available = True
 
-        if not self.points and not len([awnser for awnser in self.awnsers if awnser.status==Awnser.UNKNOWN]):
+        if self.points == 0 and all([awnser.status==Awnser.UNKNOWN for awnser in self.awnsers]):
             # if no points and no manual awnser selected, so auto isn't available
             input_req = True
             auto_available = False
@@ -161,9 +163,9 @@ class CheckboxQuestion(MultipleChoiceQuestion):
         return results # return either the correct awnser, an unknown awnser, or a human manual awnser(usually period id).
 
 class Section():
-    def __init__(self, name: str, questions: list[Question] = []) -> None:
+    def __init__(self, name: str) -> None:
         self.name = name
-        self.questions = questions
+        self.questions: list[Question] = []
     
     def search_by_question_title(self, name: str) -> Question | None:
         for question in self.questions:
