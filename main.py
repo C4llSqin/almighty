@@ -1,6 +1,5 @@
 from selenium import webdriver
 from selenium.webdriver.remote import webelement
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
 from formLogic import *
 import re
@@ -14,11 +13,12 @@ XPATH_LISTITEM_EMAIL_CHECK = "div[1]/label/div"
 XPATH_LISTITEM_MULTI = "div/div/div[2]/div/div/span/div/"
 XPATH_LISTITEM_CHECKBOX = "div/div/div[2]/div[1]/"
 
-XPATH_ROOT_STATUS = "/html/body/div/div[3]/form/div[2]/div/div[3]/div[1]"
+# XPATH_ROOT_STATUS = "/html/body/div/div[3]/form/div[2]/div/div[3]/div[1]"
+XPATH_ROOT_STATUS = "/html/body/div/div[2]/form/div[2]/div/div[3]/div[1]"
 XPATH_STATUS_PROGRESS_TEXT = "div[2]/div[2]"
 XPATH_BUTTON_BUTTON_TEXT = "span/span"
 
-XPATH_VIEW_RESULTS = "/html/body/div[1]/div[2]/div[1]/div/div[4]/div"
+XPATH_VIEW_RESULTS = "/html/body/div[1]/div[2]/div[1]/div/div[5]/div"
 
 XPATH_RESULTS_SCORE = "/html/body/div/div[2]/div[1]/div/div[1]/div/div[2]/div/div[2]/span"
 XPATH_RESULTS_SECTIONS = "/html/body/div/div[2]"
@@ -245,7 +245,7 @@ def progress(web_driver: webdriver.Firefox) -> tuple[bool, tuple[int, int]]:
         progress_val = (int(match.group(1)), int(match.group(2)))
         #We have a progress bar
 
-    button_container = web_driver.find_element(By.XPATH, "/html/body/div/div[3]/form/div[2]/div/div[3]/div[1]/div[1]")
+    button_container = web_driver.find_element(By.XPATH, "/html/body/div/div[2]/form/div[2]/div/div[3]/div[1]/div[1]")
     for button in button_container.find_elements(By.XPATH, '*'):
         button_text_elm = button.find_element(By.XPATH, XPATH_BUTTON_BUTTON_TEXT)
         if button_text_elm.text == "Submit":
