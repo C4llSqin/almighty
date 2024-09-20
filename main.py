@@ -5,6 +5,7 @@ from selenium.webdriver.common.by import By
 from formLogic import *
 import re
 import json
+import time
 
 XPATH_LISTITEM_POINTVALUE = "div/div/div[1]/div[2]"
 XPATH_LISTITEM_SHORT_STR_INPUT = "div/div/div[2]/div/div[1]/div/div[1]/input"
@@ -80,7 +81,8 @@ def fillout_section(web_driver: webdriver.Firefox, section: Section):
                             if question_type == 4:
                                 clickable = listitem.find_element(By.XPATH, f"{XPATH_LISTITEM_CHECKBOX}div[{1+i}]")
                                 clickable.click()
-                            # clickable.click()
+                            
+                    if question_type == 4: time.sleep(0.25)
             
         elif child_item != None and child_item.get_dom_attribute("data-user-email-address") != None:
             #Email Checkbox, click on it
@@ -99,6 +101,7 @@ def fillout_form(web_driver: webdriver.Firefox, form: Form) -> tuple[int, int]:
         progression = progress(web_driver)
         print(progression[1])
         if progression[0]: break
+        i += 1
     clickable = web_driver.find_element(By.XPATH, XPATH_VIEW_RESULTS)
     
     #NOTE: the clickable opens in new tab, so extract the link and then goto it
@@ -109,18 +112,18 @@ def fillout_form(web_driver: webdriver.Firefox, form: Form) -> tuple[int, int]:
     #get the score
     score_elm = web_driver.find_element(By.XPATH, XPATH_RESULTS_SCORE)
     points = score_elm.text.split('/')
-    return form, (int(points[0]), int(points[1]))
+    return (int(points[0]), int(points[1]))
 
 def machine_learning(web_driver: webdriver.Firefox, form: Form): 
     section_containers = web_driver.find_element(By.XPATH, XPATH_RESULTS_SECTIONS)
     section_index = 0
     for section_container in section_containers.find_elements(By.XPATH, '*'):
         
-        section = form.sections[section_index]
         
         for section_element in section_container.find_elements(By.XPATH, 'div/*'):
             
             if section_element.get_dom_attribute("role") != "list": continue # isn't a section
+            section = form.sections[section_index]
             
             for listitem_elm in section_element.find_elements(By.XPATH, '*'):
                 if listitem_elm.get_dom_attribute("role") != "listitem": continue #isn't a question
@@ -134,15 +137,60 @@ def machine_learning(web_driver: webdriver.Firefox, form: Form):
                 
                 score_str = title_componets[1].text
                 compoents = score_str.split('/')
-                if compoents[0] == compoents[1]: continue # Already got the maxium points for this one.
+                if compoents[0] == compoents[1]:
+                    question_name = title_componets[0].find_element(By.XPATH, "div/div[2]/span[1]").text
+                    hypothetical_question = section.search_by_question_title(question_name)
+                    assert hypothetical_question != None
+                    if type(hypothetical_question) == MultipleChoiceQuestion:
+                        hypothetical_question.get_awnser()[0].status = Awnser.CORRECT # Mark the multiple choice awnser correct.
+                    
+                    continue # Already got the maxium points for this one.
 
-                question_name = title_componets[0].find_element(By.XPATH, "div[2]/span[1]")
+                question_name = title_componets[0].find_element(By.XPATH, "div/div[2]/span[1]").text
                 #TODO analize the results page to determin which questions are correct.
-                ...
+                question = section.search_by_question_title(question_name)
+                assert question != None
 
+                if isinstance(question, (ShortTextQuestion, LongTextQuestion)):
+                    question.val = "##UNKNOWN##"
+                    continue # https://www.youtube.com/watch?v=S-9-49rM8yM
+                
+                if type(question) == MultipleChoiceQuestion:
+                    awnsers = question.get_awnser()
+                    if awnsers == []: 
+                        question.no_awnser = False
+                        continue # who knew putting nothing in a graded section is a bad idea.
+                    awnsers[0].status = Awnser.INCORRECT
+                    continue # https://www.youtube.com/watch?v=S-9-49rM8yM
+                
+                #if checkbox
+                question: CheckboxQuestion
+                awnsers = question.get_awnser()
+                if awnsers == []: 
+                    question.no_awnser = False
+                    continue # who knew putting nothing in a graded section is a bad idea.
+                
+                body_element = child.find_element(By.XPATH, "div[2]")
 
+                elem = try_find_element(body_element, "div[1]/div/label/div[2]")
+                if elem == None:
+                    question.no_choice_feedback = True
 
-        section_index += 1
+                if question.no_choice_feedback:
+                    for awnser in question.awnsers: awnser.status = Awnser.UNKNOWN
+                    continue # there is no feed back, so good luck.
+                
+                for awnser_container in body_element.find_elements(By.XPATH, '*'):
+                    awnser_name = awnser_container.get_dom_attribute("data-value")
+                    res_awnser = question.find_awnser(awnser_name)
+                    assert res_awnser != None
+                    correctness_elem = awnser_container.find_element(By.XPATH, "div/label/div[2]")
+                    res_awnser.status = Awnser.CORRECT
+                    if correctness_elem.get_dom_attribute("aria-label") == "Incorrect": res_awnser.status = Awnser.INCORRECT
+                
+            
+            section_index += 1
+    
 def scan_listitem(web_element: webelement.WebElement, section: Section):
     child_item = web_element.find_element(By.XPATH, "div")
     if web_element.get_dom_attribute("role") == "listitem":
@@ -220,7 +268,7 @@ def first_time_scan(web_driver: webdriver.Firefox) -> tuple[Form, tuple[int, int
         progression = progress(web_driver)
         print(progression[1])
         if progression[0]: break
-    form.print_form()
+    # form.print_form()
     clickable = web_driver.find_element(By.XPATH, XPATH_VIEW_RESULTS)
     
     #NOTE: the clickable opens in new tab, so extract the link and then goto it
@@ -240,9 +288,10 @@ def main():
     form, score = first_time_scan(web_driver)
     while score[0] != score[1]:
         machine_learning(web_driver, form)
-        assert (0==1)
+        # assert (0==1)
         web_driver.get(url)
         score = fillout_form(web_driver, form)
+    form.print_form()
     input("> ")
     web_driver.close()
 

@@ -65,7 +65,12 @@ class MultipleChoiceQuestion(Question):
         super().print_question()
         i = 0
         for awnser in self.awnsers:
-            print(f"{hex(i)}: {awnser.name}")
+            print(f"{hex(i)[2:]}: ", end='')
+            if   awnser.status == Awnser.MANUAL: print(COLOR_FORE_YELLOW, end='')
+            elif awnser.status == Awnser.CORRECT: print(COLOR_FORE_GREEN, end='')
+            elif awnser.status == Awnser.UNKNOWN: print(COLOR_FORE_PINK, end='')
+            else: print(COLOR_FORE_RED, end='')
+            print(f"{awnser.name}{RESET}")
             i+=1
 
     def has_manual(self):
@@ -114,9 +119,18 @@ class MultipleChoiceQuestion(Question):
         results = sorted(self.awnsers, key=lambda awnser: awnser.status)
         return [results[0]] # return either the correct awnser, an unknown awnser, or a human manual awnser(usually period id).
     
+    def find_awnser(self, name: str) -> Awnser | None:
+        for awnser in self.awnsers:
+            if awnser.name == name: return awnser
+        return None
+
 class CheckboxQuestion(MultipleChoiceQuestion):
     qtype = "checkbox"
     
+    def __init__(self, name: str, required: bool, points: int, awnsers: list[str]) -> None:
+        super().__init__(name, required, points, awnsers)
+        self.no_choice_feedback = False
+
     def get_awnser(self):
         if self.no_awnser: return []
 
