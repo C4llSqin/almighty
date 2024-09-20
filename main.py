@@ -20,9 +20,10 @@ XPATH_BUTTON_BUTTON_TEXT = "span/span"
 XPATH_VIEW_RESULTS = "/html/body/div[1]/div[2]/div[1]/div/div[4]/div"
 
 XPATH_RESULTS_SCORE = "/html/body/div/div[2]/div[1]/div/div[1]/div/div[2]/div/div[2]/span"
+XPATH_RESULTS_SECTIONS = "/html/body/div/div[2]"
 
 def make_webdriver() -> webdriver.Firefox:
-    #todo: make this read a json, and choose profiles.
+    #TODO: make this read a json, and choose profiles.
     ffOptions = webdriver.FirefoxOptions()
     ffOptions.add_argument("-profile")
     with open("profilepath.txt") as f:
@@ -91,12 +92,57 @@ def fillout_section(web_driver: webdriver.Firefox, section: Section):
 
 def fillout_form(web_driver: webdriver.Firefox, form: Form) -> tuple[int, int]:
     # webdriver.find_element(By.)
-    return (0, 0)
+    i = 0
+    while True:
+        section = form.sections[i]
+        fillout_section(web_driver, section)
+        progression = progress(web_driver)
+        print(progression[1])
+        if progression[0]: break
+    clickable = web_driver.find_element(By.XPATH, XPATH_VIEW_RESULTS)
+    
+    #NOTE: the clickable opens in new tab, so extract the link and then goto it
+    link_elm = clickable.find_element(By.XPATH, 'a')
+    link = link_elm.get_dom_attribute("href")
+    web_driver.get(link)
+    
+    #get the score
+    score_elm = web_driver.find_element(By.XPATH, XPATH_RESULTS_SCORE)
+    points = score_elm.text.split('/')
+    return form, (int(points[0]), int(points[1]))
 
 def machine_learning(web_driver: webdriver.Firefox, form: Form): 
-    #TODO analize the results page to determin which questions are correct.
-    ...
+    section_containers = web_driver.find_element(By.XPATH, XPATH_RESULTS_SECTIONS)
+    section_index = 0
+    for section_container in section_containers.find_elements(By.XPATH, '*'):
+        
+        section = form.sections[section_index]
+        
+        for section_element in section_container.find_elements(By.XPATH, 'div/*'):
+            
+            if section_element.get_dom_attribute("role") != "list": continue # isn't a section
+            
+            for listitem_elm in section_element.find_elements(By.XPATH, '*'):
+                if listitem_elm.get_dom_attribute("role") != "listitem": continue #isn't a question
+                
+                child = listitem_elm.find_element(By.XPATH, "div")
+                if child.get_dom_attribute("role") == "heading": continue # Not a question we can learn from.
+                
+                title_element = child.find_element(By.XPATH, "div[1]")
+                title_componets = title_element.find_elements(By.XPATH, '*')
+                if len(title_componets) != 2: continue #Ungraded
+                
+                score_str = title_componets[1].text
+                compoents = score_str.split('/')
+                if compoents[0] == compoents[1]: continue # Already got the maxium points for this one.
 
+                question_name = title_componets[0].find_element(By.XPATH, "div[2]/span[1]")
+                #TODO analize the results page to determin which questions are correct.
+                ...
+
+
+
+        section_index += 1
 def scan_listitem(web_element: webelement.WebElement, section: Section):
     child_item = web_element.find_element(By.XPATH, "div")
     if web_element.get_dom_attribute("role") == "listitem":
@@ -162,7 +208,7 @@ def progress(web_driver: webdriver.Firefox) -> tuple[bool, tuple[int, int]]:
             return (False, progress_val)
     raise ValueError("Unable to find the path for progression")
 
-def first_time_scan(web_driver: webdriver.Firefox) -> Form:
+def first_time_scan(web_driver: webdriver.Firefox) -> tuple[Form, tuple[int, int]]:
     form = Form()
     while True:
         section_element = find_list(web_driver)
@@ -176,15 +222,29 @@ def first_time_scan(web_driver: webdriver.Firefox) -> Form:
         if progression[0]: break
     form.print_form()
     clickable = web_driver.find_element(By.XPATH, XPATH_VIEW_RESULTS)
+    
     #NOTE: the clickable opens in new tab, so extract the link and then goto it
     link_elm = clickable.find_element(By.XPATH, 'a')
     link = link_elm.get_dom_attribute("href")
     web_driver.get(link)
-    # clickable.click()
+    
+    #get the score
+    score_elm = web_driver.find_element(By.XPATH, XPATH_RESULTS_SCORE)
+    points = score_elm.text.split('/')
+    return form, (int(points[0]), int(points[1]))
 
-a = make_webdriver()
-a.get(input("formURL> "))
-# input("> ")
-first_time_scan(a)
-input("> ")
-a.close()
+def main():
+    web_driver = make_webdriver()
+    url = input("formURL> ")
+    web_driver.get(url)
+    form, score = first_time_scan(web_driver)
+    while score[0] != score[1]:
+        machine_learning(web_driver, form)
+        assert (0==1)
+        web_driver.get(url)
+        score = fillout_form(web_driver, form)
+    input("> ")
+    web_driver.close()
+
+if __name__ == "__main__":
+    main()

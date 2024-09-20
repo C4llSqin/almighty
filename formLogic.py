@@ -163,9 +163,10 @@ class CheckboxQuestion(MultipleChoiceQuestion):
         return results # return either the correct awnser, an unknown awnser, or a human manual awnser(usually period id).
 
 class Section():
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, questions: list[Question] = None) -> None:
         self.name = name
-        self.questions: list[Question] = []
+        if questions == None: questions = []
+        self.questions: list[Question] = questions
     
     def search_by_question_title(self, name: str) -> Question | None:
         for question in self.questions:
@@ -181,8 +182,9 @@ class Section():
         print(f"{COLOR_FORE_CYAN}####{RESET}")
 
 class Form():
-    def __init__(self, sections: list[Section] = []) -> None:
-        self.sections = sections
+    def __init__(self, sections: list[Section] = None) -> None:
+        if sections == None: sections = []
+        self.sections: list[Section] = sections
     
     def search_by_question_title(self, name: str) -> Section | None:
         for section in self.sections:
