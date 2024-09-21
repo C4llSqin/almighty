@@ -2,6 +2,8 @@ from selenium import webdriver
 from selenium.webdriver.remote import webelement
 from selenium.webdriver.common.by import By
 from formLogic import *
+from netnavigation import *
+from lxml import html
 import re
 import json
 import time
@@ -10,15 +12,15 @@ XPATH_LISTITEM_POINTVALUE = "div/div/div[1]/div[2]"
 XPATH_LISTITEM_SHORT_STR_INPUT = "div/div/div[2]/div/div[1]/div/div[1]/input"
 XPATH_LISTITEM_LONG_STR_INPUT = "div/div/div[2]/div/div[1]/div[2]/textarea"
 XPATH_LISTITEM_EMAIL_CHECK = "div[1]/label/div"
-XPATH_LISTITEM_MULTI = "div/div/div[2]/div/div/span/div/"
+XPATH_LISTITEM_MULTI = "div/div/div[2]/div/div/span/div"
 XPATH_LISTITEM_CHECKBOX = "div/div/div[2]/div[1]/"
 
 # XPATH_ROOT_STATUS = "/html/body/div/div[3]/form/div[2]/div/div[3]/div[1]"
-XPATH_ROOT_STATUS = "/html/body/div/div[2]/form/div[2]/div/div[3]/div[1]"
+XPATH_ROOT_STATUS = "/html/body/div/div[var]/form/div[2]/div/div[3]/div[1]"
 XPATH_STATUS_PROGRESS_TEXT = "div[2]/div[2]"
 XPATH_BUTTON_BUTTON_TEXT = "span/span"
 
-XPATH_VIEW_RESULTS = "/html/body/div[1]/div[2]/div[1]/div/div[5]/div"
+XPATH_VIEW_RESULTS = "/html/body/div[1]/div[2]/div[1]/div/div[var]/div/a"
 
 XPATH_RESULTS_SCORE = "/html/body/div/div[2]/div[1]/div/div[1]/div/div[2]/div/div[2]/span"
 XPATH_RESULTS_SECTIONS = "/html/body/div/div[2]"
@@ -31,22 +33,28 @@ def make_webdriver() -> webdriver.Firefox:
         ffOptions.add_argument(f.read())
     return webdriver.Firefox(ffOptions)
 
-def try_find_element(web_element: webelement.WebElement, xpath: str):
+def try_find_element(web_element: wraped_element, xpath: str):
     try:
         return web_element.find_element(By.XPATH, xpath)
     except:
         return None
 
-def find_list(web_driver: webdriver.Firefox):
+def make_root(web_driver: webdriver.Firefox) -> wraped_element:
     whole_html = web_driver.page_source # literaly the whole html as plain text
-    section_start = re.search(r"<div class=\"(.{3,6})\" role=\"list\">", whole_html)
-    if section_start == None:
-        breakpoint()
-    section_start_class_name = section_start.group(1)
-    return web_driver.find_element(By.CLASS_NAME, section_start_class_name)
+    tree = html.fromstring(whole_html)
+    return wraped_element(web_driver, tree)
 
-def fillout_section(web_driver: webdriver.Firefox, section: Section):
-    section_element = find_list(web_driver)
+def find_list(web_driver: webdriver.Firefox) -> tuple[wraped_element, wraped_element]:
+    whole_html = web_driver.page_source # literaly the whole html as plain text
+    tree = html.fromstring(whole_html)
+    root_elm = wraped_element(web_driver, tree)
+    section_start = re.search(r"<div class=\"(.{3,6})\" role=\"list\">", whole_html)
+    assert section_start != None
+    section_start_class_name = section_start.group(1)
+    elm = root_elm.find_element(By.XPATH, f"//div[@class='{section_start_class_name}']")
+    return (elm, root_elm)
+
+def fillout_section(section_element: wraped_element, section: Section):
     for listitem in section_element.find_elements(By.XPATH, '*'):
         child_item = listitem.find_element(By.XPATH, "div")
         if listitem.get_dom_attribute("role") == "listitem":
@@ -62,27 +70,29 @@ def fillout_section(web_driver: webdriver.Firefox, section: Section):
                 awnser = question.get_awnser()
                 
                 if question_type == 0 or question_type == 1:
+                    assert isinstance(awnser, str)
                     text_box = None
                     if question_type: text_box = listitem.find_element(By.XPATH, XPATH_LISTITEM_LONG_STR_INPUT)
                     else: text_box = listitem.find_element(By.XPATH, XPATH_LISTITEM_SHORT_STR_INPUT)
-                    
                     text_box.click()
                     text_box.clear()
                     text_box.send_keys(awnser)
                 
                 elif question_type == 2 or question_type == 4:
+                    assert isinstance(awnser, list)
                     button_order = [values[0] for values in data_pram_json[0][4][0][1]]
                     for sub_awnser in awnser:
                         if sub_awnser.name in button_order:
                             i = button_order.index(sub_awnser.name)
                             if question_type == 2:
-                                clickable = listitem.find_element(By.XPATH, f"{XPATH_LISTITEM_MULTI}div[{1+i}]")
+                                container = listitem.find_element(By.XPATH, XPATH_LISTITEM_MULTI)
+                                clickable = wraped_element(container.web_driver, container.internal_element[i])
                                 clickable.click()
                             if question_type == 4:
                                 clickable = listitem.find_element(By.XPATH, f"{XPATH_LISTITEM_CHECKBOX}div[{1+i}]")
                                 clickable.click()
                             
-                    if question_type == 4: time.sleep(0.25)
+                time.sleep(0.1)
             
         elif child_item != None and child_item.get_dom_attribute("data-user-email-address") != None:
             #Email Checkbox, click on it
@@ -92,30 +102,29 @@ def fillout_section(web_driver: webdriver.Firefox, section: Section):
         else:
             print("Not a Question, don't know what it could be")
 
-def fillout_form(web_driver: webdriver.Firefox, form: Form) -> tuple[int, int]:
+def fillout_form(web_driver: webdriver.Firefox, form: Form) -> tuple[tuple[int, int], wraped_element, wraped_element]:
     # webdriver.find_element(By.)
     i = 0
     while True:
         section = form.sections[i]
-        fillout_section(web_driver, section)
-        progression = progress(web_driver)
+        section_element, root_tree = find_list(web_driver)
+        fillout_section(section_element, section)
+        progression = progress(root_tree)
         print(progression[1])
         if progression[0]: break
         i += 1
-    clickable = web_driver.find_element(By.XPATH, XPATH_VIEW_RESULTS)
-    
-    #NOTE: the clickable opens in new tab, so extract the link and then goto it
-    link_elm = clickable.find_element(By.XPATH, 'a')
+    root_tree = make_root(web_driver)
+    link_elm = root_tree.find_element(By.XPATH, XPATH_VIEW_RESULTS)
     link = link_elm.get_dom_attribute("href")
     web_driver.get(link)
-    
+    section_element, root_tree = find_list(web_driver)
     #get the score
-    score_elm = web_driver.find_element(By.XPATH, XPATH_RESULTS_SCORE)
+    score_elm = root_tree.find_element(By.XPATH, XPATH_RESULTS_SCORE)
     points = score_elm.text.split('/')
-    return (int(points[0]), int(points[1]))
+    return (int(points[0]), int(points[1])), section_element, root_tree
 
-def machine_learning(web_driver: webdriver.Firefox, form: Form): 
-    section_containers = web_driver.find_element(By.XPATH, XPATH_RESULTS_SECTIONS)
+def machine_learning(root_tree: wraped_element, form: Form): 
+    section_containers = root_tree.find_element(By.XPATH, XPATH_RESULTS_SECTIONS)
     section_index = 0
     for section_container in section_containers.find_elements(By.XPATH, '*'):
         
@@ -128,7 +137,9 @@ def machine_learning(web_driver: webdriver.Firefox, form: Form):
             for listitem_elm in section_element.find_elements(By.XPATH, '*'):
                 if listitem_elm.get_dom_attribute("role") != "listitem": continue #isn't a question
                 
-                child = listitem_elm.find_element(By.XPATH, "div")
+                
+                if len(listitem_elm.internal_element) > 1: child = listitem_elm.find_element(By.XPATH, "div[2]")
+                else: child = listitem_elm.find_element(By.XPATH, "div")
                 if child.get_dom_attribute("role") == "heading": continue # Not a question we can learn from.
                 
                 title_element = child.find_element(By.XPATH, "div[1]")
@@ -137,18 +148,22 @@ def machine_learning(web_driver: webdriver.Firefox, form: Form):
                 
                 score_str = title_componets[1].text
                 compoents = score_str.split('/')
+                question_name_element = title_componets[0].find_element(By.XPATH, "div/div[2]/span[1]")
+                if question_name_element.text != None: question_name = question_name_element.text
+                else:
+                    question_name = ""
+                    for p_element in question_name_element.find_elements(By.XPATH, 'p'):
+                        if p_element.text != None: question_name = question_name + p_element.text
+                
+                question = section.search_by_question_title(question_name) # type: ignore # by following the order of events down the program it will eventually be a check box question
+                
                 if compoents[0] == compoents[1]:
-                    question_name = title_componets[0].find_element(By.XPATH, "div/div[2]/span[1]").text
-                    hypothetical_question = section.search_by_question_title(question_name)
-                    assert hypothetical_question != None
-                    if type(hypothetical_question) == MultipleChoiceQuestion:
-                        hypothetical_question.get_awnser()[0].status = Awnser.CORRECT # Mark the multiple choice awnser correct.
+                    assert question != None
+                    if type(question) == MultipleChoiceQuestion:
+                        question.get_awnser()[0].status = Awnser.CORRECT # Mark the multiple choice awnser correct.
                     
                     continue # Already got the maxium points for this one.
 
-                question_name = title_componets[0].find_element(By.XPATH, "div/div[2]/span[1]").text
-                #TODO analize the results page to determin which questions are correct.
-                question = section.search_by_question_title(question_name)
                 assert question != None
 
                 if isinstance(question, (ShortTextQuestion, LongTextQuestion)):
@@ -191,7 +206,7 @@ def machine_learning(web_driver: webdriver.Firefox, form: Form):
             
             section_index += 1
     
-def scan_listitem(web_element: webelement.WebElement, section: Section):
+def scan_listitem(web_element: wraped_element, section: Section):
     child_item = web_element.find_element(By.XPATH, "div")
     if web_element.get_dom_attribute("role") == "listitem":
         data_pram_str = child_item.get_dom_attribute("data-params")
@@ -236,16 +251,17 @@ def scan_listitem(web_element: webelement.WebElement, section: Section):
     else:
         print("Not a Question, don't know what it could be")
 
-def progress(web_driver: webdriver.Firefox) -> tuple[bool, tuple[int, int]]:
-    parent = web_driver.find_element(By.XPATH, XPATH_ROOT_STATUS)
+def progress(root_tree: wraped_element) -> tuple[bool, tuple[int, int]]:
+    parent = root_tree.find_element(By.XPATH, XPATH_ROOT_STATUS)
     progress_val = (0,0)
     if len(parent.find_elements(By.XPATH, '*')) == 3:
         progress_text_elm = parent.find_element(By.XPATH, XPATH_STATUS_PROGRESS_TEXT)
         match = re.search(r"Page (.*) of (.*)", progress_text_elm.text)
+        assert match != None
         progress_val = (int(match.group(1)), int(match.group(2)))
         #We have a progress bar
 
-    button_container = web_driver.find_element(By.XPATH, "/html/body/div/div[2]/form/div[2]/div/div[3]/div[1]/div[1]")
+    button_container = parent.find_element(By.XPATH, "div[1]")
     for button in button_container.find_elements(By.XPATH, '*'):
         button_text_elm = button.find_element(By.XPATH, XPATH_BUTTON_BUTTON_TEXT)
         if button_text_elm.text == "Submit":
@@ -256,43 +272,43 @@ def progress(web_driver: webdriver.Firefox) -> tuple[bool, tuple[int, int]]:
             return (False, progress_val)
     raise ValueError("Unable to find the path for progression")
 
-def first_time_scan(web_driver: webdriver.Firefox) -> tuple[Form, tuple[int, int]]:
+def first_time_scan(web_driver: webdriver.Firefox) -> tuple[Form, tuple[int, int], wraped_element]:
     form = Form()
     while True:
-        section_element = find_list(web_driver)
+        section_element, root_tree = find_list(web_driver)
         section = Section("Root")
         for child_element in section_element.find_elements(By.XPATH, '*'):
             scan_listitem(child_element, section)
         form.sections.append(section)
-        fillout_section(web_driver, section)
-        progression = progress(web_driver)
+        fillout_section(section_element, section)
+        progression = progress(root_tree)
         print(progression[1])
         if progression[0]: break
     # form.print_form()
-    clickable = web_driver.find_element(By.XPATH, XPATH_VIEW_RESULTS)
-    
-    #NOTE: the clickable opens in new tab, so extract the link and then goto it
-    link_elm = clickable.find_element(By.XPATH, 'a')
+    root_tree = make_root(web_driver)
+    link_elm = root_tree.find_element(By.XPATH, XPATH_VIEW_RESULTS)
     link = link_elm.get_dom_attribute("href")
     web_driver.get(link)
     
     #get the score
+    root_tree = make_root(web_driver)
     score_elm = web_driver.find_element(By.XPATH, XPATH_RESULTS_SCORE)
     points = score_elm.text.split('/')
-    return form, (int(points[0]), int(points[1]))
+    return form, (int(points[0]), int(points[1])), root_tree
 
 def main():
     web_driver = make_webdriver()
     url = input("formURL> ")
     web_driver.get(url)
-    form, score = first_time_scan(web_driver)
+    form, score, root_tree = first_time_scan(web_driver)
     while score[0] != score[1]:
-        machine_learning(web_driver, form)
-        # assert (0==1)
+        tstart = time.time()
+        machine_learning(root_tree, form)
+        tend = time.time()
+        print(f"Machine Learing took {round((tend-tstart)*1000, 2)}MS")
         web_driver.get(url)
-        score = fillout_form(web_driver, form)
+        score, _, root_tree = fillout_form(web_driver, form)
     form.print_form()
-    input("> ")
     web_driver.close()
 
 if __name__ == "__main__":
