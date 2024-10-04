@@ -1,5 +1,4 @@
 from selenium import webdriver
-from selenium.webdriver.remote import webelement
 from selenium.webdriver.common.by import By
 from formLogic import *
 from netnavigation import *
@@ -7,6 +6,8 @@ from lxml import html
 import re
 import json
 import time
+from tqdm import tqdm
+from colorama import init as term_init
 
 XPATH_LISTITEM_POINTVALUE = "div/div/div[1]/div[2]"
 XPATH_LISTITEM_SHORT_STR_INPUT = "div/div/div[2]/div/div[1]/div/div[1]/input"
@@ -15,7 +16,6 @@ XPATH_LISTITEM_EMAIL_CHECK = "div[1]/label/div"
 XPATH_LISTITEM_MULTI = "div/div/div[2]/div/div/span/div"
 XPATH_LISTITEM_CHECKBOX = "div/div/div[2]/div[1]/"
 
-# XPATH_ROOT_STATUS = "/html/body/div/div[3]/form/div[2]/div/div[3]/div[1]"
 XPATH_ROOT_STATUS = "/html/body/div/div[var]/form/div[2]/div/div[3]/div[1]"
 XPATH_STATUS_PROGRESS_TEXT = "div[2]/div[2]"
 XPATH_BUTTON_BUTTON_TEXT = "span/span"
@@ -24,6 +24,59 @@ XPATH_VIEW_RESULTS = "/html/body/div[1]/div[2]/div[1]/div/div[var]/div/a"
 
 XPATH_RESULTS_SCORE = "/html/body/div/div[2]/div[1]/div/div[1]/div/div[2]/div/div[2]/span"
 XPATH_RESULTS_SECTIONS = "/html/body/div/div[2]"
+
+name = r"""
+ ______   ___                           __      __                
+/\  _  \ /\_ \               __        /\ \    /\ \__             
+\ \ \L\ \\//\ \     ___ ___ /\_\     __\ \ \___\ \ ,_\  __  __    
+ \ \  __ \ \ \ \  /' __` __`\/\ \  /'_ `\ \  _ `\ \ \/ /\ \/\ \   
+  \ \ \/\ \ \_\ \_/\ \/\ \/\ \ \ \/\ \L\ \ \ \ \ \ \ \_\ \ \_\ \  
+   \ \_\ \_\/\____\ \_\ \_\ \_\ \_\ \____ \ \_\ \_\ \__\\/`____ \ 
+    \/_/\/_/\/____/\/_/\/_/\/_/\/_/\/___L\ \/_/\/_/\/__/ `/___/> \
+                                     /\____/                /\___/
+                                     \_/__/                 \/__/ 
+"""[1:-1]
+
+rgb_to_escape = lambda color: f"\033[38;2;{int(color[0])};{int(color[1])};{int(color[2])}m"
+
+def display_logo():
+    top_color = (0, 255, 0)
+    bottom_color = (0, 255, 255)
+    name_parts = name.split('\n')
+    delta = (
+        (bottom_color[0]-top_color[0])/(len(name_parts)-1), 
+        (bottom_color[1]-top_color[1])/(len(name_parts)-1), 
+        (bottom_color[2]-top_color[2])/(len(name_parts)-1)
+    )
+    current_color = top_color
+    for line in name_parts:
+        print(rgb_to_escape(current_color) + line)
+        current_color = (
+            current_color[0] + delta[0], 
+            current_color[1] + delta[1], 
+            current_color[2] + delta[2]
+        )
+    print("\033[0m", end="")
+
+def gradent_str(text: str, color1: tuple[int, int, int], color2: tuple[int, int, int]):
+    le = len(text) - 1 #short for length
+    delta = (
+        (color2[0]-color1[0])/le, 
+        (color2[1]-color1[1])/le, 
+        (color2[2]-color1[2])/le
+    )
+    current_color = color1
+    new_str = ""
+    for char in text:
+        new_str += rgb_to_escape(current_color) + char
+        current_color = (
+            current_color[0] + delta[0], 
+            current_color[1] + delta[1], 
+            current_color[2] + delta[2]
+        )
+
+    return new_str + "\033[0m"
+
 
 def make_webdriver() -> webdriver.Firefox:
     #TODO: make this read a json, and choose profiles.
@@ -55,7 +108,7 @@ def find_list(web_driver: webdriver.Firefox) -> tuple[wraped_element, wraped_ele
     return (elm, root_elm)
 
 def fillout_section(section_element: wraped_element, section: Section):
-    for listitem in section_element.find_elements(By.XPATH, '*'):
+    for listitem in tqdm(section_element.find_elements(By.XPATH, '*'), colour = '#e942f5', unit='question', desc = 'fillout_section', leave=False):
         child_item = listitem.find_element(By.XPATH, "div")
         if listitem.get_dom_attribute("role") == "listitem":
             data_pram_str = child_item.get_dom_attribute("data-params")
@@ -105,12 +158,14 @@ def fillout_section(section_element: wraped_element, section: Section):
 def fillout_form(web_driver: webdriver.Firefox, form: Form) -> tuple[tuple[int, int], wraped_element, wraped_element]:
     # webdriver.find_element(By.)
     i = 0
+    bar = tqdm(total = len(form.sections), colour = '#ffff00', unit='section', desc = 'fillout_form', leave=False)
     while True:
         section = form.sections[i]
         section_element, root_tree = find_list(web_driver)
         fillout_section(section_element, section)
         progression = progress(root_tree)
-        print(progression[1])
+        # print(progression[1])
+        bar.update(n=1)
         if progression[0]: break
         i += 1
     root_tree = make_root(web_driver)
@@ -156,52 +211,56 @@ def machine_learning(root_tree: wraped_element, form: Form):
                         if p_element.text != None: question_name = question_name + p_element.text
                 
                 question = section.search_by_question_title(question_name) # type: ignore # by following the order of events down the program it will eventually be a check box question
+                assert question != None
                 
                 if compoents[0] == compoents[1]:
-                    assert question != None
                     if type(question) == MultipleChoiceQuestion:
-                        question.get_awnser()[0].status = Awnser.CORRECT # Mark the multiple choice awnser correct.
+                        question.get_awnser()[0].status = Awnser.CORRECT # type: ignore # Mark the multiple choice awnser correct.
                     
                     continue # Already got the maxium points for this one.
 
-                assert question != None
-
                 if isinstance(question, (ShortTextQuestion, LongTextQuestion)):
-                    question.val = "##UNKNOWN##"
+                    question.intervene("The awnser you provided was incorrect.")
                     continue # https://www.youtube.com/watch?v=S-9-49rM8yM
                 
+                if question.score_method == Question.NOTHING:
+                    question.intervene("Putting nothing in a graded question won't get you points")
+                    continue # who knew putting nothing in a graded question is a bad idea.
+                
+                awnsers: list[Awnser] = question.get_awnser() #type: ignore
+
+                if question.score_method == Question.MANUAL_MODE:
+                    question.intervene("The awnser you provided was incorect.")
+                    # https://www.youtube.com/watch?v=S-9-49rM8yM
+
+                #TODO: properly read all awnsers in a multiple choice for possibly more info.
                 if type(question) == MultipleChoiceQuestion:
-                    awnsers = question.get_awnser()
-                    if awnsers == []: 
-                        question.no_awnser = False
-                        continue # who knew putting nothing in a graded section is a bad idea.
                     awnsers[0].status = Awnser.INCORRECT
-                    continue # https://www.youtube.com/watch?v=S-9-49rM8yM
+                    continue 
                 
-                #if checkbox
-                question: CheckboxQuestion
-                awnsers = question.get_awnser()
-                if awnsers == []: 
-                    question.no_awnser = False
-                    continue # who knew putting nothing in a graded section is a bad idea.
-                
+                assert isinstance(question, CheckboxQuestion)
+
                 body_element = child.find_element(By.XPATH, "div[2]")
 
-                elem = try_find_element(body_element, "div[1]/div/label/div[2]")
-                if elem == None:
-                    question.no_choice_feedback = True
+                feed_back = False # Search if we get checkbox feedback
 
-                if question.no_choice_feedback:
-                    for awnser in question.awnsers: awnser.status = Awnser.UNKNOWN
-                    continue # there is no feed back, so good luck.
-                
                 for awnser_container in body_element.find_elements(By.XPATH, '*'):
                     awnser_name = awnser_container.get_dom_attribute("data-value")
                     res_awnser = question.find_awnser(awnser_name)
+                    
                     assert res_awnser != None
-                    correctness_elem = awnser_container.find_element(By.XPATH, "div/label/div[2]")
+                    
+                    try: correctness_elem = awnser_container.find_element(By.XPATH, "div/label/div[2]")
+                    except: continue
+                    
+                    feed_back = True
                     res_awnser.status = Awnser.CORRECT
                     if correctness_elem.get_dom_attribute("aria-label") == "Incorrect": res_awnser.status = Awnser.INCORRECT
+                
+                if not feed_back:
+                    question.intervene("There is no awnser feed back for this multiple choice, SCAN is unavailable.")
+                    for awnser in question.awnsers: awnser.status = Awnser.UNKNOWN
+                    question.choice_feedback = False
                 
             
             section_index += 1
@@ -282,7 +341,7 @@ def first_time_scan(web_driver: webdriver.Firefox) -> tuple[Form, tuple[int, int
         form.sections.append(section)
         fillout_section(section_element, section)
         progression = progress(root_tree)
-        print(progression[1])
+        # print(progression[1])
         if progression[0]: break
     # form.print_form()
     root_tree = make_root(web_driver)
@@ -297,17 +356,26 @@ def first_time_scan(web_driver: webdriver.Firefox) -> tuple[Form, tuple[int, int
     return form, (int(points[0]), int(points[1])), root_tree
 
 def main():
-    web_driver = make_webdriver()
+    term_init()
+    display_logo()
     url = input("formURL> ")
+    print(f"\"{gradent_str('Gaze on my Works, ye Mighty, and despair!', (0,255,0), (0,255,255))}\"")
+    web_driver = make_webdriver()
+    main_loop(web_driver, url)
+
+def main_loop(web_driver, url: str):
     web_driver.get(url)
     form, score, root_tree = first_time_scan(web_driver)
+    score_bar = tqdm(total=score[1], desc='Score', unit='pt', colour='#00ff00')
+    score_bar.update(n=score[0])
     while score[0] != score[1]:
         tstart = time.time()
         machine_learning(root_tree, form)
         tend = time.time()
-        print(f"Machine Learing took {round((tend-tstart)*1000, 2)}MS")
+        # print(f"Machine Learing took {round((tend-tstart)*1000, 2)}MS")
         web_driver.get(url)
         score, _, root_tree = fillout_form(web_driver, form)
+        score_bar.update(n=score[0] - score_bar.n)
     form.print_form()
     web_driver.close()
 

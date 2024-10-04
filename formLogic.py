@@ -18,12 +18,23 @@ class Awnser:
         self.status = status
 
 class Question(ABC):
+    SCAN_FOR_AWNSER = 0
+    MANUAL_MODE = 1
+    NOTHING = 2
+    AWAIT_INTERVENTION = 3
+
     qtype = "unknown"
 
     def __init__(self, name: str, required: bool, points: int) -> None:
         self.name = name
         self.required = required
         self.points = points
+        self.score_method = self.SCAN_FOR_AWNSER
+        self.manual_awnser = None
+        self.intervention_reason = "Unknown"
+        if       required and not points: self.intervene("This question is ungraded, we need manual input")
+        elif not required and not points: self.intervene("This question is ungraded and not reuired, we want manual input")
+        elif not required and     points: self.intervene("This question is graded yet its not reuired, we want manual input")
 
     def print_question(self):
         print(f"{COLOR_FORE_CYAN}{self.name}{RESET} " + 
@@ -31,24 +42,49 @@ class Question(ABC):
               f"{COLOR_FORE_PINK}{self.points} pt(s){RESET} (qtype: {self.qtype})")
 
     def get_awnser(self) -> list[Awnser] | str:
-        return "OHNO!"
+        if self.score_method == Question.AWAIT_INTERVENTION:
+            self.do_intervention()
+        
+        if self.score_method == Question.NOTHING: return []
+
+        elif self.score_method == Question.MANUAL_MODE: return self.manual_awnser # type: ignore
+
+        else: return self.scan_for_awnser()
+    
+    def do_intervention(self):
+        print(f"\nIntervention Requested: {self.intervention_reason}")
+        self.print_question()
+        self.process_intervention()
+
+    def process_intervention(self):
+        text_in = input(f"{self.qtype}> ")
+        raise NotImplemented
+
+    def scan_for_awnser(self) -> list[Awnser]:
+        raise NotImplemented
 
     def _prompt_user(self) -> str:
         return input(f"{self.qtype}> ")
+    
+    def intervene(self, reason: str):
+        self.score_method = Question.AWAIT_INTERVENTION
+        self.intervention_reason = reason
 
 class ShortTextQuestion(Question):
     qtype = "Short Str"
 
     def __init__(self, name: str, required: bool, points: int) -> None:
         super().__init__(name, required, points)
-        self.val = "##UNKNOWN##"
-
-    def get_awnser(self) -> str:
-        if self.val == "##UNKNOWN##":
-            self.print_question()
-            print(f"Unbruteable qtype: {self.qtype}")
-            self.val = self._prompt_user()
-        return self.val
+        self.intervene("We don't correctly awnser text questions, please write the awnser.")
+    
+    def process_intervention(self):
+        self.score_method = Question.MANUAL_MODE
+        while True:
+            text_in = input(f"{self.qtype}> ")
+            if text_in and self.required: 
+                self.manual_awnser = text_in
+                break
+            else: print("Required Question, Can't be empty")
 
 class LongTextQuestion(ShortTextQuestion):
     qtype = "Long Str"
@@ -59,7 +95,6 @@ class MultipleChoiceQuestion(Question):
     def __init__(self, name: str, required: bool, points: int, awnsers: list[str]) -> None:
         super().__init__(name, required, points)
         self.awnsers = [Awnser(awnser) for awnser in awnsers]
-        self.no_awnser = False
     
     def print_question(self):
         super().print_question()
@@ -73,52 +108,43 @@ class MultipleChoiceQuestion(Question):
             print(f"{awnser.name}{RESET}")
             i+=1
 
-    def has_manual(self):
-        return any([awnser.status==Awnser.MANUAL for awnser in self.awnsers])
+    def is_manual(self):
+        return self.score_method == self.MANUAL_MODE
 
-    def get_awnser(self):
-        if self.no_awnser: return []
-
-        input_req = False #input requested
-        auto_available = True
-        none_available = False
-        if not self.required and all([awnser.status==Awnser.UNKNOWN for awnser in self.awnsers]):
-            # if not required and first time, so none is available
-            input_req = True
-            none_available = True
-
-        if self.points == 0 and all([awnser.status==Awnser.UNKNOWN for awnser in self.awnsers]):
-            # if no points and no manual awnser selected, so auto isn't available
-            input_req = True
-            auto_available = False
-
-        if input_req:
-            self.print_question()
-            print("Manual input requested")
-            if auto_available: print(f"{COLOR_FORE_GREEN}AUTO: AVAILABLE{RESET}")
-            else: print(f"{COLOR_FORE_RED}AUTO: UNAVAILABLE{RESET}")
-            if none_available: print(f"{COLOR_FORE_GREEN}NONE: AVAILABLE{RESET}")
-            else: print(f"{COLOR_FORE_RED}NONE: UNAVAILABLE{RESET}")
-            while True:
-                try:
-                    val = self._prompt_user()
-                    if (val == "" or val == "@" or val.lower() == "auto"):
-                        if auto_available: break
-                        else: raise ValueError
-                    if (val == "#" or val.lower() == "none"):
-                        if none_available: 
-                            self.no_awnser=True
-                            return []
-                        else: raise ValueError
-                    num = int(val, base=16)
-                    self.awnsers[num].status = Awnser.MANUAL
-                    return [self.awnsers[num]]
-                except ValueError:
-                    print("Response Invalid, Try again.")
-
+    def scan_for_awnser(self) -> list[Awnser]:
         results = sorted(self.awnsers, key=lambda awnser: awnser.status)
         return [results[0]] # return either the correct awnser, an unknown awnser, or a human manual awnser(usually period id).
     
+    def process_intervention(self):
+        scan_available = self.points > 0
+        none_available = not self.required
+        if scan_available: print(f"{COLOR_FORE_GREEN}SCAN: AVAILABLE{RESET}")
+        else: print(f"{COLOR_FORE_RED}SCAN: UNAVAILABLE{RESET}")
+        if none_available: print(f"{COLOR_FORE_GREEN}NONE: AVAILABLE{RESET}")
+        else: print(f"{COLOR_FORE_RED}NONE: UNAVAILABLE{RESET}")
+        while True:
+            try:
+                val = input(f"{self.qtype}> ")
+                if (val == "" or val == "@" or val.lower() == "auto"):
+                    if scan_available:
+                        self.score_method = Question.SCAN_FOR_AWNSER
+                        return
+                    else: raise ValueError
+                if (val == "#" or val.lower() == "none"):
+                    if none_available: 
+                        self.score_method = Question.NOTHING
+                        return
+                    else: raise ValueError
+                self.manual_input_parse(val)
+                return
+            except ValueError:
+                print("Response Invalid, Try again.")
+
+    def manual_input_parse(self, text: str):
+        num = int(text, base=16)
+        self.score_method = Question.MANUAL_MODE
+        self.awnsers[num].status = Awnser.MANUAL
+
     def find_awnser(self, name: str) -> Awnser | None:
         for awnser in self.awnsers:
             if awnser.name == name: return awnser
@@ -129,52 +155,43 @@ class CheckboxQuestion(MultipleChoiceQuestion):
     
     def __init__(self, name: str, required: bool, points: int, awnsers: list[str]) -> None:
         super().__init__(name, required, points, awnsers)
-        self.no_choice_feedback = False
+        self.choice_feedback = True
 
-    def get_awnser(self):
-        if self.no_awnser: return []
+    def scan_for_awnser(self) -> list[Awnser]:
+        return [awnser for awnser in self.awnsers if awnser.status < Awnser.INCORRECT] # return either the correct awnser, an unknown awnser, or a human manual awnser(usually period id).
 
-        input_req = False #input requested
-        auto_available = True
-        none_available = False
-        if not self.required and all([awnser.status==Awnser.UNKNOWN for awnser in self.awnsers]):
-            # if not required and first time, so none is available
-            input_req = True
-            none_available = True
+    def process_intervention(self):
+        scan_available = self.points > 0 and self.choice_feedback
+        none_available = not self.required
+        if scan_available: print(f"{COLOR_FORE_GREEN}SCAN: AVAILABLE{RESET}")
+        else: print(f"{COLOR_FORE_RED}SCAN: UNAVAILABLE{RESET}")
+        if none_available: print(f"{COLOR_FORE_GREEN}NONE: AVAILABLE{RESET}")
+        else: print(f"{COLOR_FORE_RED}NONE: UNAVAILABLE{RESET}")
+        while True:
+            try:
+                val = input(f"{self.qtype}> ")
+                if (val == "" or val == "@" or val.lower() == "auto"):
+                    if scan_available:
+                        self.score_method = Question.SCAN_FOR_AWNSER
+                        return
+                    else: raise ValueError
+                if (val == "#" or val.lower() == "none"):
+                    if none_available: 
+                        self.score_method = Question.NOTHING
+                        return
+                    else: raise ValueError
+                self.manual_input_parse(val)
+                return
+            except ValueError:
+                print("Response Invalid, Try again.")
 
-        if self.points == 0 and all([awnser.status==Awnser.UNKNOWN for awnser in self.awnsers]):
-            # if no points and no manual awnser selected, so auto isn't available
-            input_req = True
-            auto_available = False
-
-        if input_req:
-            self.print_question()
-            print("Manual input requested")
-            if auto_available: print(f"{COLOR_FORE_GREEN}AUTO: AVAILABLE{RESET}")
-            else: print(f"{COLOR_FORE_RED}AUTO: UNAVAILABLE{RESET}")
-            if none_available: print(f"{COLOR_FORE_GREEN}NONE: AVAILABLE{RESET}")
-            else: print(f"{COLOR_FORE_RED}NONE: UNAVAILABLE{RESET}")
-            while True:
-                try:
-                    val = self._prompt_user()
-                    if (val == "" or val == "@" or val.lower() == "auto"):
-                        if auto_available: break
-                        else: raise ValueError
-                    if (val == "#" or val.lower() == "none"):
-                        if none_available: 
-                            self.no_awnser=True
-                            return []
-                        else: raise ValueError
-                    
-                    selected = [self.awnsers[int(va, base=16)] for va in val.split(';')]
-                    for awnser in self.awnsers: awnser.status = Awnser.INCORRECT
-                    for sel in selected: sel.status = Awnser.MANUAL
-                    return selected
-                except ValueError:
-                    print("Response Invalid, Try again.")
-
-        results = [awnser for awnser in self.awnsers if awnser.status < Awnser.INCORRECT]
-        return results # return either the correct awnser, an unknown awnser, or a human manual awnser(usually period id).
+    def manual_input_parse(self, text: str):
+        try: 
+            selected = [self.awnsers[int(va, base=16)] for va in text.split(';')]
+            self.score_method = Question.MANUAL_MODE
+            self.manual_awnser = selected
+            for sel in selected: sel.status = Awnser.MANUAL
+        except: raise ValueError
 
 class Section():
     def __init__(self, name: str, questions: list[Question] = None) -> None: # type: ignore
