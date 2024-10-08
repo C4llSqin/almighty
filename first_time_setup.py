@@ -78,6 +78,7 @@ try:
     number = hash(driver.page_source)
     driver.close()
     assert number == 0x2a0ebd1e8523c243 # hash of example.com
+    print("Valid.")
 
 except AssertionError:
     print("Hash Check Fail.")
