@@ -367,7 +367,7 @@ def progress(root_tree: wraped_element) -> tuple[bool, tuple[int, int]]:
             return (False, progress_val)
     raise ValueError("Unable to find the path for progression")
 
-def first_time_scan(web_driver: webdriver.Firefox, profile: dict[str, str]) -> tuple[Form, tuple[int, int], wraped_element]:
+def first_time_scan(web_driver: webdriver.Firefox, cfg: dict[str, dict], profile: dict[str, str]) -> tuple[Form, tuple[int, int], wraped_element]:
     form = Form()
     i = 0
     while True:
@@ -377,7 +377,7 @@ def first_time_scan(web_driver: webdriver.Firefox, profile: dict[str, str]) -> t
             scan_listitem(child_element, section)
         form.sections.append(section)
         if is_last_page(root_tree):
-            new_form = search_for_forms(form, {"export": {"export_dir": "forms/"}})
+            new_form = search_for_forms(form, cfg)
             if new_form != None:
                 if restart_needed(new_form, form, i):
                     restart_form(root_tree)
@@ -412,14 +412,16 @@ def is_last_page(root_tree: wraped_element):
     return False
 
 def search_for_forms(form: Form, cfg: dict[str, dict]) -> Form | None:
-    name = sha1(form.get_hashable_text().encode()).hexdigest()
-    fp = cfg["export"]["export_dir"] + name + ".form"
-    if path.exists(fp):
-        new_form = import_from_file(fp)
-        combine_form(new_form, form)
-        return new_form
+    try:
+        name = sha1(form.get_hashable_text().encode()).hexdigest()
+        fp = cfg["export"]["export_dir"] + name + ".form"
+        if path.exists(fp):
+            new_form = import_from_file(fp)
+            combine_form(new_form, form)
+            return new_form
     # FEAT: possably add manual form loading.
-    return None
+        return None
+    except: return None
 
 def restart_needed(form_new: Form, form_old: Form, section_index: int) -> bool:
     assert sha1(form_new.get_hashable_text().encode()).hexdigest() == sha1(form_old.get_hashable_text().encode()).hexdigest(), "Forms are not the same"
@@ -469,7 +471,7 @@ def main():
 
 def main_loop(web_driver: webdriver.Firefox, url: str, cfg: dict[str, dict], profile: dict[str, str]):
     web_driver.get(url)
-    form, score, root_tree = first_time_scan(web_driver, profile)
+    form, score, root_tree = first_time_scan(web_driver, cfg, profile)
     if root_tree == None:
         score, _, root_tree = fillout_form(web_driver, form, profile)
     score_bar = tqdm(total=score[1], desc='Score', unit='pt', colour='#00ff00')
@@ -482,7 +484,7 @@ def main_loop(web_driver: webdriver.Firefox, url: str, cfg: dict[str, dict], pro
             score_bar.update(n=score[0] - score_bar.n)
     except:
         web_driver.close()
-        # export(form, cfg["export"]["on_error"], cfg["export"]["export_dir"])
+        export(form, cfg["export"]["on_error"], cfg["export"]["export_dir"])
     web_driver.close()
     export(form, cfg["export"]["on_compleation"], cfg["export"]["export_dir"])
 
