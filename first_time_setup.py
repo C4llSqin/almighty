@@ -22,10 +22,10 @@ print(name)
 print("Welcome To Almighty, This is the Setup Guide.")
 print("If you don't already have firefox please install it.")
 
-if not path.exists("profilepath.txt"):
-    print("\nStep 1: Firefox Setup.")
+if not path.exists("config.json"):
+    print("\nStep 1: Firefox / Config Setup.")
     print("1.A Please setup a firefox profile with an google account logged in")
-    print("  Note: while some google forms don't require an google login, some do,\n  so this step is semi-optional, But Recomended")
+    print("  Note: while some google forms don't require an google login, some do,\n  so this sub-step is semi-optional, But Recomended")
 
     input("Enter to Continue... ")
 
@@ -35,10 +35,47 @@ if not path.exists("profilepath.txt"):
     input("Enter to Continue... ")
 
     print("\n1.C In firefox, under the profile name, in the table copy the value of \"Root Directory\"")
-    print("  Tip: it's advised to visit this page with the profile with the google acount because it will label which 'profile is in use and cannot be deleted', if its the only profile open.")
+    
+    profile_path = input("Firefox Profile Path: ")
 
-    with open("profilepath.txt", 'w') as f:
-        f.write(input("Firefox Profile Path: "))
+    print("\n1.D Please provide an email")
+    print("  Note: while some forms have an automatic email collection method where you manualy input the email and it like a question. but internaly, it isn't")
+
+    email = input("Email: ")
+
+    print("\n1.E Exportation Rules, how forms will be exported the following modes exist: ")
+    print(" * All: Will export all awnsers, including unscored questions like name entries")
+    print(" * Scored: Will only all scored awnsers")
+    print(" * Empty: Will only export the questions without an awnser key.")
+    print(" * None: Will not export.")
+    print(" * Ask: Will prompt user at export time.")
+
+    while True: 
+        error_mode = input("When almighty encounters an error> ").lower()
+        if error_mode in ["all", "ask", "none", "empty"]: break
+        print("Invalid input")
+    
+    while True: 
+        compleate_mode = input("When almighty succeeds> ").lower()
+        if compleate_mode in ["all", "ask", "none", "empty"]: break
+        print("Invalid input")
+    
+    save_directory = input("Where would you like to save these files (defualts to `forms/`)")
+    if save_directory.strip() == "": save_directory = "forms/"
+    
+    config = {
+        "profiles": {
+            "defualt": {
+                "profile_path": profile_path,
+                "provided_email": email
+            }
+        },
+        "export": {
+            "on_error": error_mode,
+            "on_compleation": compleate_mode,
+            "export_dir": "forms/"
+        }
+    }
 
 print("\nStep 2: Dependancy Setup.")
 print("2.A In order for Almighty to run, It relys on non-standard libary modules, This step will use `pip`, to install the python modules.")
@@ -69,7 +106,7 @@ try:
     main.display_logo()
     example_gradent = main.gradent_str('https://example.com', (0, 255, 0), (0, 255, 255))
     print("\nSpawning Firefox... ", end="")
-    driver = main.make_webdriver()
+    driver, _, _ = main.make_webdriver()
     print("Spawned.")
     print(f"Going to `{example_gradent}`... ", end="")
     driver.get("https://example.com")

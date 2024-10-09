@@ -1,13 +1,21 @@
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from formLogic import *
-from netnavigation import *
-from lxml import html
 import re
 import json
 import time
+from hashlib import sha1
+from os import path
+
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+
+from formLogic import Form, Section, Awnser, import_from_file, export, combine_form
+from formLogic import Question, MultipleChoiceQuestion, CheckboxQuestion, ShortTextQuestion, LongTextQuestion
+
+from netnavigation import wraped_element
+
+from lxml import html
 from tqdm import tqdm
 from colorama import init as term_init
+
 
 XPATH_LISTITEM_POINTVALUE = "div/div/div[1]/div[2]"
 XPATH_LISTITEM_SHORT_STR_INPUT = "div/div/div[2]/div/div[1]/div/div[1]/input"
@@ -78,13 +86,32 @@ def gradent_str(text: str, color1: tuple[int, int, int], color2: tuple[int, int,
     return new_str + "\033[0m"
 
 
-def make_webdriver() -> webdriver.Firefox:
+def make_webdriver() -> tuple[webdriver.Firefox, dict[str, dict], dict[str, str]]:
     #TODO: make this read a json, and choose profiles.
+    if not path.exists("config.json"): raise FileNotFoundError
+    with open("config.json", 'r') as f:
+        cfg = json.load(f)
+    
+    profiles: dict[str, dict[str, str]] = cfg["profiles"]
+    profile_names = list(profiles.keys())
+    profile = {}
+    if len(profile_names) == 0: raise ValueError("Incompleate Configuration")
+    if len(profile_names) == 1: profile = profiles[profile_names[0]]
+    else:
+        print("Profiles: ")
+        for profile_name in profile_names: #TODO: don't show whole email
+            print(f" * {profile_name}: email={profiles[profile_name]['email']}")
+        
+        while True:
+            user_profile = input("profile> ")
+            if user_profile not in profile_names: continue
+            profile = profiles[user_profile]
+            break
+
     ffOptions = webdriver.FirefoxOptions()
     ffOptions.add_argument("-profile")
-    with open("profilepath.txt") as f:
-        ffOptions.add_argument(f.read())
-    return webdriver.Firefox(ffOptions)
+    ffOptions.add_argument(profile["profile_path"])
+    return webdriver.Firefox(ffOptions), cfg, profile
 
 def try_find_element(web_element: wraped_element, xpath: str):
     try:
@@ -107,7 +134,7 @@ def find_list(web_driver: webdriver.Firefox) -> tuple[wraped_element, wraped_ele
     elm = root_elm.find_element(By.XPATH, f"//div[@class='{section_start_class_name}']")
     return (elm, root_elm)
 
-def fillout_section(section_element: wraped_element, section: Section):
+def fillout_section(section_element: wraped_element, section: Section, profile: dict[str, str]):
     for listitem in tqdm(section_element.find_elements(By.XPATH, '*'), colour = '#e942f5', unit='question', desc = 'fillout_section', leave=False):
         child_item = listitem.find_element(By.XPATH, "div")
         if listitem.get_dom_attribute("role") == "listitem":
@@ -145,8 +172,17 @@ def fillout_section(section_element: wraped_element, section: Section):
                                 clickable = listitem.find_element(By.XPATH, f"{XPATH_LISTITEM_CHECKBOX}div[{1+i}]")
                                 clickable.click()
                             
-                time.sleep(0.1)
-            
+                time.sleep(0.2)
+            else:
+                try: title_elm = child_item.find_element(By.XPATH, "div[1]/div[1]/div/span[1]")
+                except: continue
+                if title_elm.text == "Email": # manual email entry
+                    text_box = child_item.find_element(By.XPATH, "div[1]/div[2]")
+                    text_box.click()
+                    text_box.clear()
+                    text_box.send_keys(profile["provided_email"])
+
+
         elif child_item != None and child_item.get_dom_attribute("data-user-email-address") != None:
             #Email Checkbox, click on it
             #TODO: find the XPATH to the actual clickable area.
@@ -155,14 +191,14 @@ def fillout_section(section_element: wraped_element, section: Section):
         else:
             print("Not a Question, don't know what it could be")
 
-def fillout_form(web_driver: webdriver.Firefox, form: Form) -> tuple[tuple[int, int], wraped_element, wraped_element]:
+def fillout_form(web_driver: webdriver.Firefox, form: Form, profile: dict[str, str]) -> tuple[tuple[int, int], wraped_element, wraped_element]:
     # webdriver.find_element(By.)
     i = 0
     bar = tqdm(total = len(form.sections), colour = '#ffff00', unit='section', desc = 'fillout_form', leave=False)
     while True:
         section = form.sections[i]
         section_element, root_tree = find_list(web_driver)
-        fillout_section(section_element, section)
+        fillout_section(section_element, section, profile)
         progression = progress(root_tree)
         # print(progression[1])
         bar.update(n=1)
@@ -331,18 +367,29 @@ def progress(root_tree: wraped_element) -> tuple[bool, tuple[int, int]]:
             return (False, progress_val)
     raise ValueError("Unable to find the path for progression")
 
-def first_time_scan(web_driver: webdriver.Firefox) -> tuple[Form, tuple[int, int], wraped_element]:
+def first_time_scan(web_driver: webdriver.Firefox, profile: dict[str, str]) -> tuple[Form, tuple[int, int], wraped_element]:
     form = Form()
+    i = 0
     while True:
         section_element, root_tree = find_list(web_driver)
         section = Section("Root")
         for child_element in section_element.find_elements(By.XPATH, '*'):
             scan_listitem(child_element, section)
         form.sections.append(section)
-        fillout_section(section_element, section)
+        if is_last_page(root_tree):
+            new_form = search_for_forms(form, {"export": {"export_dir": "forms/"}})
+            if new_form != None:
+                if restart_needed(new_form, form, i):
+                    restart_form(root_tree)
+                    return new_form, None, None # type: ignore
+                form = new_form
+                section = new_form.sections[i]
+
+        fillout_section(section_element, section, profile)
         progression = progress(root_tree)
         # print(progression[1])
         if progression[0]: break
+        i+=1
     # form.print_form()
     root_tree = make_root(web_driver)
     link_elm = root_tree.find_element(By.XPATH, XPATH_VIEW_RESULTS)
@@ -355,29 +402,89 @@ def first_time_scan(web_driver: webdriver.Firefox) -> tuple[Form, tuple[int, int
     points = score_elm.text.split('/')
     return form, (int(points[0]), int(points[1])), root_tree
 
+def is_last_page(root_tree: wraped_element):
+    parent = root_tree.find_element(By.XPATH, XPATH_ROOT_STATUS)
+    button_container = parent.find_element(By.XPATH, "div[1]")
+    for button in button_container.find_elements(By.XPATH, '*'):
+        button_text_elm = button.find_element(By.XPATH, XPATH_BUTTON_BUTTON_TEXT)
+        if button_text_elm.text == "Submit":
+            return True
+    return False
+
+def search_for_forms(form: Form, cfg: dict[str, dict]) -> Form | None:
+    name = sha1(form.get_hashable_text().encode()).hexdigest()
+    fp = cfg["export"]["export_dir"] + name + ".form"
+    if path.exists(fp):
+        new_form = import_from_file(fp)
+        combine_form(new_form, form)
+        return new_form
+    # FEAT: possably add manual form loading.
+    return None
+
+def restart_needed(form_new: Form, form_old: Form, section_index: int) -> bool:
+    assert sha1(form_new.get_hashable_text().encode()).hexdigest() == sha1(form_old.get_hashable_text().encode()).hexdigest(), "Forms are not the same"
+    for i in range(section_index - 1):
+        new_section = form_new.sections[i]
+        old_section = form_old.sections[i]
+
+        new_questions = new_section.questions
+        old_questions = [old_section.search_by_question_title(question.name) for question in new_questions]
+        assert all([question != None for question in old_questions]), "Forms are not the same"
+
+        for new_question, old_question in zip(new_questions, old_questions): #type: ignore
+            old_question: Question
+            new_awnser, old_awnser = (new_question.get_awnser(), old_question.get_awnser())
+            if isinstance(new_awnser, str) and isinstance(old_awnser, str):
+                if new_awnser != old_awnser: 
+                    return True
+            
+            elif isinstance(new_awnser, list) and isinstance(old_awnser, list):
+                new_awnser.sort(key=lambda x: x.name)
+                old_awnser.sort(key=lambda x: x.name)
+                if [awnser.name for awnser in new_awnser] != [awnser.name for awnser in old_awnser]:
+                    return True
+    return False
+
+def restart_form(root_tree: wraped_element):
+    parent = root_tree.find_element(By.XPATH, XPATH_ROOT_STATUS)
+    reset_container = parent.find_elements(By.XPATH, "div")[-1]
+    reset_container.find_element(By.XPATH, "div")
+    reset_container.click()
+    root_tree = make_root(root_tree.web_driver)
+    confirmation_element = root_tree.find_elements(By.XPATH, "/html/body/div")[-1]
+    button_element = confirmation_element.find_element(By.XPATH, "div/div[2]/div[3]/div[2]")
+    button_element.click()
+
 def main():
     term_init()
     display_logo()
     url = input("formURL> ")
-    print(f"\"{gradent_str('Gaze on my Works, ye Mighty, and despair!', (0,255,0), (0,255,255))}\"")
-    web_driver = make_webdriver()
-    main_loop(web_driver, url)
+    print(f"\"{gradent_str('Gaze upon my Works, ye Mighty, and despair!', (0,255,0), (0,255,255))}\"")
+    try: web_driver, config, profile = make_webdriver()
+    except FileNotFoundError: 
+        print("config.json not found, please make sure that you have ran the setup script.")
+        print("unable to proceed.")
+        return
+    main_loop(web_driver, url, config, profile)
 
-def main_loop(web_driver, url: str):
+def main_loop(web_driver: webdriver.Firefox, url: str, cfg: dict[str, dict], profile: dict[str, str]):
     web_driver.get(url)
-    form, score, root_tree = first_time_scan(web_driver)
+    form, score, root_tree = first_time_scan(web_driver, profile)
+    if root_tree == None:
+        score, _, root_tree = fillout_form(web_driver, form, profile)
     score_bar = tqdm(total=score[1], desc='Score', unit='pt', colour='#00ff00')
     score_bar.update(n=score[0])
-    while score[0] != score[1]:
-        tstart = time.time()
-        machine_learning(root_tree, form)
-        tend = time.time()
-        # print(f"Machine Learing took {round((tend-tstart)*1000, 2)}MS")
-        web_driver.get(url)
-        score, _, root_tree = fillout_form(web_driver, form)
-        score_bar.update(n=score[0] - score_bar.n)
-    form.print_form()
+    try:
+        while score[0] != score[1]:
+            machine_learning(root_tree, form)
+            web_driver.get(url)
+            score, _, root_tree = fillout_form(web_driver, form, profile)
+            score_bar.update(n=score[0] - score_bar.n)
+    except:
+        web_driver.close()
+        # export(form, cfg["export"]["on_error"], cfg["export"]["export_dir"])
     web_driver.close()
+    export(form, cfg["export"]["on_compleation"], cfg["export"]["export_dir"])
 
 if __name__ == "__main__":
     main()
