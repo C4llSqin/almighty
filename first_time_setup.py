@@ -52,12 +52,12 @@ if not path.exists("config.json"):
 
     while True: 
         error_mode = input("When almighty encounters an error> ").lower()
-        if error_mode in ["all", "ask", "none", "empty"]: break
+        if error_mode in ["all", "scored", "ask", "none", "empty"]: break
         print("Invalid input")
     
     while True: 
         compleate_mode = input("When almighty succeeds> ").lower()
-        if compleate_mode in ["all", "ask", "none", "empty"]: break
+        if compleate_mode in ["all", "scored", "ask", "none", "empty"]: break
         print("Invalid input")
     
     save_directory = input("Where would you like to save these files (defualts to `forms/`)")

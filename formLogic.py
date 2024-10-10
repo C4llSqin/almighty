@@ -42,6 +42,9 @@ class Awnser:
             self.name.encode() + b'\x00' +
             to_byte(self.status, 1)
         )
+    
+    def copy(self) -> "Awnser":
+        return Awnser(self.name, self.status)
 
 class Question(ABC):
     SCAN_FOR_AWNSER = 0
@@ -114,6 +117,9 @@ class Question(ABC):
             to_byte(Question.QTYPE_MAP[self.qtype], 1)
         )
 
+    def copy(self) -> "Question":
+        raise NotImplementedError
+
 class ShortTextQuestion(Question):
     qtype = "Short Str"
 
@@ -134,6 +140,13 @@ class ShortTextQuestion(Question):
     def export(self, buffer: io.BytesIO):
         super().export(buffer)
         buffer.write(self.manual_awnser.encode() + b'\x00')
+    
+    def copy(self) -> Question:
+        question = type(self)(self.name, self.required, self.points)
+        question.score_method = self.score_method
+        question.manual_awnser = "".join([self.manual_awnser])
+        question.intervention_reason = self.intervention_reason
+        return question
 
 class LongTextQuestion(ShortTextQuestion):
     qtype = "Long Str"
@@ -209,6 +222,19 @@ class MultipleChoiceQuestion(Question):
         for awnser in self.awnsers:
             awnser.export(buffer)
 
+    def copy(self) -> Question:
+        question = type(self)(self.name, self.required, self.points, [])
+        question.score_method = self.score_method
+        question.awnsers = [awnser.copy() for awnser in self.awnsers]
+        
+        question.intervention_reason = self.intervention_reason
+        if self.manual_awnser == None:
+            question.manual_awnser = None
+        else:
+            indexes = [self.manual_awnser.index(awnser) for awnser in self.awnsers]
+            question.manual_awnser = [question.awnsers[index] for index in indexes]
+        return question
+    
 class CheckboxQuestion(MultipleChoiceQuestion):
     qtype = "checkbox"
     
@@ -251,6 +277,12 @@ class CheckboxQuestion(MultipleChoiceQuestion):
             self.manual_awnser = selected
             for sel in selected: sel.status = Awnser.MANUAL
         except: raise ValueError
+    
+    def copy(self) -> Question:
+        question = super().copy()
+        assert isinstance(question, type(self))
+        question.choice_feedback = self.choice_feedback
+        return question
 
 class Section():
     def __init__(self, name: str, questions: list[Question] = None) -> None: # type: ignore
@@ -311,6 +343,10 @@ class Section():
             
             questions.append(question)
         return Section(name, questions)
+    
+    def copy(self) -> "Section":
+        questions = [question.copy() for question in self.questions]
+        return Section(self.name, questions)
 
 class Form():
     def __init__(self, sections: list[Section] = None) -> None: # type: ignore
@@ -341,6 +377,11 @@ class Form():
         sections = [Section.from_file(buffer) for _ in range(from_byte(buffer.read(1)))]
         return Form(sections)
 
+    def copy(self) -> "Form":
+        sections = [section.copy() for section in self.sections]
+        return Form(sections)
+
+
 def strip_info(question: Question):
     if isinstance(question, ShortTextQuestion):
         question.manual_awnser = ""
@@ -348,11 +389,7 @@ def strip_info(question: Question):
         assert isinstance(question, MultipleChoiceQuestion)
         for awnser in question.awnsers: awnser.status = Awnser.UNKNOWN
 
-def export(form: Form, mode: str, directory: str):
-    if mode == "none": return
-
-    if not path.exists(directory): mkdir(directory)
-
+def strip_form(form: Form, mode: str):
     if mode != "all":
         questions: list[Question] = []
         for section in form.sections: questions.extend(section.questions)
@@ -360,7 +397,24 @@ def export(form: Form, mode: str, directory: str):
         for question in questions:
             if mode == "empty": strip_info(question)
             elif not question.points and mode == "scored": strip_info(question)
-    
+
+def export(form: Form, mode: str, directory: str, reason: str):
+    if mode == "ask":
+        while mode not in ["all", "scored", "none", "empty"]: 
+            mode = input(f"export mode [all, scored, ask, none, empty]({reason=})> ").lower()
+            if mode == "ask": 
+                print("What do you think we're doing now?")
+                continue
+            if mode in ["all", "scored", "none", "empty"]: 
+                break
+            print("Invalid input")
+
+    if mode == "none": return
+
+    if not path.exists(directory): mkdir(directory)
+    form = form.copy()
+    strip_form(form, mode)
+
     text_hash = sha1(form.get_hashable_text().encode()).hexdigest()
     with open(f"{directory}{text_hash}.form", 'wb') as f:
         form.export(f) # type: ignore
@@ -404,4 +458,5 @@ def combine_form(form_new: Form, form_old: Form):
             elif old_question.manual_awnser != "": new_question.manual_awnser = old_question.manual_awnser
             
             if new_question.manual_awnser == "": new_question.intervene(".form didn't provide an awnser for this one")
-    
+
+hash_form = lambda form: sha1(form.get_hashable_text().encode()).hexdigest()

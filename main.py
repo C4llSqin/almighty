@@ -1,13 +1,12 @@
 import re
 import json
 import time
-from hashlib import sha1
 from os import path
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 
-from formLogic import Form, Section, Awnser, import_from_file, export, combine_form
+from formLogic import Form, Section, Awnser, import_from_file, export, combine_form, hash_form
 from formLogic import Question, MultipleChoiceQuestion, CheckboxQuestion, ShortTextQuestion, LongTextQuestion
 
 from netnavigation import wraped_element
@@ -15,6 +14,14 @@ from netnavigation import wraped_element
 from lxml import html
 from tqdm import tqdm
 from colorama import init as term_init
+
+cheatsheet_available = True
+
+try:
+    import cheatsheet
+except: #If the user has manualy removed cheatsheet.
+    cheatsheet = None
+    cheatsheet_available = False
 
 
 XPATH_LISTITEM_POINTVALUE = "div/div/div[1]/div[2]"
@@ -44,6 +51,10 @@ name = r"""
                                      /\____/                /\___/
                                      \_/__/                 \/__/ 
 """[1:-1]
+
+##
+# UTILITY
+##
 
 rgb_to_escape = lambda color: f"\033[38;2;{int(color[0])};{int(color[1])};{int(color[2])}m"
 
@@ -85,6 +96,9 @@ def gradent_str(text: str, color1: tuple[int, int, int], color2: tuple[int, int,
 
     return new_str + "\033[0m"
 
+##
+# Networking
+##
 
 def make_webdriver() -> tuple[webdriver.Firefox, dict[str, dict], dict[str, str]]:
     #TODO: make this read a json, and choose profiles.
@@ -92,6 +106,13 @@ def make_webdriver() -> tuple[webdriver.Firefox, dict[str, dict], dict[str, str]
     with open("config.json", 'r') as f:
         cfg = json.load(f)
     
+    try: 
+        cheatsheet_cfg = cfg["cheatsheet"]
+        if not cheatsheet_cfg["enabled"]:
+            cheatsheet_available = False
+    except ValueError: # user doesn't want cheatsheet on.
+        cheatsheet_available = False
+
     profiles: dict[str, dict[str, str]] = cfg["profiles"]
     profile_names = list(profiles.keys())
     profile = {}
@@ -133,6 +154,10 @@ def find_list(web_driver: webdriver.Firefox) -> tuple[wraped_element, wraped_ele
     section_start_class_name = section_start.group(1)
     elm = root_elm.find_element(By.XPATH, f"//div[@class='{section_start_class_name}']")
     return (elm, root_elm)
+
+##
+# Program Form Interaction
+##
 
 def fillout_section(section_element: wraped_element, section: Section, profile: dict[str, str]):
     for listitem in tqdm(section_element.find_elements(By.XPATH, '*'), colour = '#e942f5', unit='question', desc = 'fillout_section', leave=False):
@@ -177,8 +202,9 @@ def fillout_section(section_element: wraped_element, section: Section, profile: 
                 try: title_elm = child_item.find_element(By.XPATH, "div[1]/div[1]/div/span[1]")
                 except: continue
                 if title_elm.text == "Email": # manual email entry
-                    text_box = child_item.find_element(By.XPATH, "div[1]/div[2]")
-                    text_box.click()
+                    text_box = child_item.find_element(By.XPATH, "div[1]/div[2]/div[1]/div/div[1]/input")
+                    try: text_box.click()
+                    except: continue
                     text_box.clear()
                     text_box.send_keys(profile["provided_email"])
 
@@ -377,14 +403,19 @@ def first_time_scan(web_driver: webdriver.Firefox, cfg: dict[str, dict], profile
             scan_listitem(child_element, section)
         form.sections.append(section)
         if is_last_page(root_tree):
+            print("Searching for .form for this... ", end="")
             new_form = search_for_forms(form, cfg)
             if new_form != None:
+                print("Search suceeded,\nChecking if restart needs to be done... ", end="")
                 if restart_needed(new_form, form, i):
+                    print("Restart needed.", end="")
                     restart_form(root_tree)
                     return new_form, None, None # type: ignore
+                else: print("Restart Not needed.")
                 form = new_form
                 section = new_form.sections[i]
-
+            else: print("None found.")
+            
         fillout_section(section_element, section, profile)
         progression = progress(root_tree)
         # print(progression[1])
@@ -411,20 +442,38 @@ def is_last_page(root_tree: wraped_element):
             return True
     return False
 
+def restart_form(root_tree: wraped_element):
+    parent = root_tree.find_element(By.XPATH, XPATH_ROOT_STATUS)
+    reset_container = parent.find_elements(By.XPATH, "div")[-1]
+    reset_container.find_element(By.XPATH, "div")
+    reset_container.click()
+    root_tree = make_root(root_tree.web_driver)
+    confirmation_element = root_tree.find_elements(By.XPATH, "/html/body/div")[-1]
+    button_element = confirmation_element.find_element(By.XPATH, "div/div[2]/div[3]/div[2]")
+    button_element.click()
+
+##
+# Form loading
+##
+
 def search_for_forms(form: Form, cfg: dict[str, dict]) -> Form | None:
     try:
-        name = sha1(form.get_hashable_text().encode()).hexdigest()
+        name = hash_form(form)
         fp = cfg["export"]["export_dir"] + name + ".form"
         if path.exists(fp):
             new_form = import_from_file(fp)
             combine_form(new_form, form)
             return new_form
-    # FEAT: possably add manual form loading.
-        return None
+        
+        if cheatsheet_available:
+            assert cheatsheet != None
+            if cfg["cheatsheet"]["recv_forms"]:
+                return cheatsheet.sync_multi_request_form(name, cfg["cheatsheet"]["providers"])
+
     except: return None
 
 def restart_needed(form_new: Form, form_old: Form, section_index: int) -> bool:
-    assert sha1(form_new.get_hashable_text().encode()).hexdigest() == sha1(form_old.get_hashable_text().encode()).hexdigest(), "Forms are not the same"
+    assert hash_form(form_new) == hash_form(form_old), "Forms are not the same"
     for i in range(section_index - 1):
         new_section = form_new.sections[i]
         old_section = form_old.sections[i]
@@ -447,21 +496,15 @@ def restart_needed(form_new: Form, form_old: Form, section_index: int) -> bool:
                     return True
     return False
 
-def restart_form(root_tree: wraped_element):
-    parent = root_tree.find_element(By.XPATH, XPATH_ROOT_STATUS)
-    reset_container = parent.find_elements(By.XPATH, "div")[-1]
-    reset_container.find_element(By.XPATH, "div")
-    reset_container.click()
-    root_tree = make_root(root_tree.web_driver)
-    confirmation_element = root_tree.find_elements(By.XPATH, "/html/body/div")[-1]
-    button_element = confirmation_element.find_element(By.XPATH, "div/div[2]/div[3]/div[2]")
-    button_element.click()
+##
+# Highlevel Program control
+##
 
 def main():
     term_init()
     display_logo()
     url = input("formURL> ")
-    print(f"\"{gradent_str('Gaze upon my Works, ye Mighty, and despair!', (0,255,0), (0,255,255))}\"")
+    print(f"\"{gradent_str('Gaze upon my Works, ye Mighty, and despair!', (0,255,0), (0,255,255))}\"") # Epic, quote from a poem, then from a game refrencing the poem.
     try: web_driver, config, profile = make_webdriver()
     except FileNotFoundError: 
         print("config.json not found, please make sure that you have ran the setup script.")
@@ -471,9 +514,18 @@ def main():
 
 def main_loop(web_driver: webdriver.Firefox, url: str, cfg: dict[str, dict], profile: dict[str, str]):
     web_driver.get(url)
+    
     form, score, root_tree = first_time_scan(web_driver, cfg, profile)
-    if root_tree == None:
+    if root_tree == None: # if had to reset because of form loading.
+        web_driver.get(url)
         score, _, root_tree = fillout_form(web_driver, form, profile)
+    
+    if score[0] == score[1]:
+        print("Wow, first try! did you load a form or did you roll the dice and hit big?")
+        web_driver.close()
+        export(form, cfg["export"]["on_compleation"], cfg["export"]["export_dir"], "compleation")
+        return
+    
     score_bar = tqdm(total=score[1], desc='Score', unit='pt', colour='#00ff00')
     score_bar.update(n=score[0])
     try:
@@ -484,9 +536,13 @@ def main_loop(web_driver: webdriver.Firefox, url: str, cfg: dict[str, dict], pro
             score_bar.update(n=score[0] - score_bar.n)
     except:
         web_driver.close()
-        export(form, cfg["export"]["on_error"], cfg["export"]["export_dir"])
+        export(form, cfg["export"]["on_error"], cfg["export"]["export_dir"], "error")
     web_driver.close()
-    export(form, cfg["export"]["on_compleation"], cfg["export"]["export_dir"])
+    export(form, cfg["export"]["on_compleation"], cfg["export"]["export_dir"], "compleation")
+    if cheatsheet_available:
+        assert cheatsheet != None
+        if cfg["cheatsheet"]["send_forms"]:
+            cheatsheet.sync_multi_send_form(form, cfg["cheatsheet"]["providers"])
 
 if __name__ == "__main__":
     main()
