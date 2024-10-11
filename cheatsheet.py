@@ -413,4 +413,13 @@ def main():
                     print("Invalid pramiter")
             sync_multi_host_server(host_cfg_list)
 
-if __name__ == "__main__": main()
+if __name__ == "__main__": 
+    if path.exists(__file__.removesuffix(path.basename(__file__)) + "main.py"): # If main exists in the same directory as cheatsheet
+        main() #User cli
+    else:
+        print("DEDICATED SERVER SETUP DETECTED.")
+        if not path.exists("config.json"): 
+            print("Uanble to read config.josn")
+        with open("config.json", 'r') as f:
+            cfg = json.load(f)
+            sync_multi_host_server(cfg["cheatsheet"]["hosting"])

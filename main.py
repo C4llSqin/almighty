@@ -101,7 +101,7 @@ def gradent_str(text: str, color1: tuple[int, int, int], color2: tuple[int, int,
 ##
 
 def make_webdriver() -> tuple[webdriver.Firefox, dict[str, dict], dict[str, str]]:
-    #TODO: make this read a json, and choose profiles.
+    global cheatsheet_available
     if not path.exists("config.json"): raise FileNotFoundError
     with open("config.json", 'r') as f:
         cfg = json.load(f)
@@ -521,9 +521,13 @@ def main_loop(web_driver: webdriver.Firefox, url: str, cfg: dict[str, dict], pro
         score, _, root_tree = fillout_form(web_driver, form, profile)
     
     if score[0] == score[1]:
-        print("Wow, first try! did you load a form or did you roll the dice and hit big?")
+        print("Wow, first try!")
         web_driver.close()
         export(form, cfg["export"]["on_compleation"], cfg["export"]["export_dir"], "compleation")
+        if cheatsheet_available:
+            assert cheatsheet != None
+            if cfg["cheatsheet"]["send_forms"]:
+                cheatsheet.sync_multi_send_form(form, cfg["cheatsheet"]["providers"])
         return
     
     score_bar = tqdm(total=score[1], desc='Score', unit='pt', colour='#00ff00')

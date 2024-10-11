@@ -1,3 +1,4 @@
+import json
 from os import system, path
 from sys import platform
 
@@ -16,6 +17,27 @@ name = r"""
 if __name__ != "__main__":
     print("I don't know why your importing the setup utility, but please just run this as a script.")
     raise NotImplementedError()
+
+def Yes_or_No(prompt: str) -> bool:
+    while True:
+        text = input(f"{prompt}[Y/n]> ").lower()
+        if text.strip() == "" or text == "y":
+            return True
+        elif text == "n":
+            return False
+        else:
+            print("Invalid Input")
+
+def in_list(prompt: str, valid: list[str]) -> str:
+    while True:
+        text = input(f"{prompt} {valid}> ").lower()
+        if text in valid: return text
+        print("Invalid input")
+
+def is_int(prompt: str) -> int:
+    while True:
+        try: return int(input(prompt))
+        except: print("Invalid Input")
 
 print(name)
 
@@ -50,44 +72,153 @@ if not path.exists("config.json"):
     print(" * None: Will not export.")
     print(" * Ask: Will prompt user at export time.")
 
-    while True: 
-        error_mode = input("When almighty encounters an error> ").lower()
-        if error_mode in ["all", "scored", "ask", "none", "empty"]: break
-        print("Invalid input")
+    options = ["all", "scored", "ask", "none", "empty"]
+    error_mode = in_list("When almighty encounters an error", options)
     
-    while True: 
-        compleate_mode = input("When almighty succeeds> ").lower()
-        if compleate_mode in ["all", "scored", "ask", "none", "empty"]: break
-        print("Invalid input")
+    compleate_mode = in_list("When almighty succeeds", options)
     
-    save_directory = input("Where would you like to save these files (defualts to `forms/`)")
+    save_directory = input("Where would you like to save these files (defualts to `forms/`)?> ")
     if save_directory.strip() == "": save_directory = "forms/"
+    if not save_directory.endswith('/') and not save_directory.endswith('\\'): save_directory += '/'
     
-    config = {
-        "profiles": {
-            "defualt": {
-                "profile_path": profile_path,
-                "provided_email": email
+    print("\n1.F Networking (Cheatsheet) Rules: ")
+    print("  Cheatsheet is a network extenstension to almighty where it's crowd sourced awnser key's for whatever form you are compleating.")
+    print("if your providers have the awnser for the form, it reduces the atempts needed down to one if all awnsers are filled in.")
+    print("and if not, you get to help the next person searching for the exact same form using almighty.")
+    print("\n  All form data gets properly sanitized beforehand so you won't be sending personal info like name or email adrress, before it leaves your device.")
+
+    enable_cheatsheet =  Yes_or_No("Enable Cheatsheet?[Y/n]> ")
+    
+    print("")
+    if enable_cheatsheet:
+        print("1.F.1 Networking (Cheatsheet) Rules: Form Sending")
+        print("  In order for the critical functionaly of Cheatsheet to work, it needs crowd sourced forms.")
+
+        form_sending = Yes_or_No("Will you contribute your forms?")
+
+        print("\n1.F.2 Networking (Cheatsheet) Rules: Form Receiving")
+        print("  With this off, you won't donwload any awnserkeys from Cheatsheet")
+
+        form_receiving = Yes_or_No("Will you receiving forms?")
+
+        print("\n1.F.3 Networking (Cheatsheet) Rules: Providers")
+        print("  Without configuring your providers, you won't be doing any Sending or Reciving")
+        print("\n  Also I, the creator have my own provider, would you like to add it to your provider list (it's sorta the defualt)?")
+
+        provider_list = []
+
+        add_formtress = Yes_or_No("Add defualt provider?")
+
+        if add_formtress:
+            provider_list.append({
+                "name": "Formtress (Defualt)",
+                "mode": "ipv4",
+                "addr": "ipv4",
+                "port": 6590,
+            })
+
+        add_localhost_provider = Yes_or_No("Add localhost provider? (useful for development)")
+
+        if add_localhost_provider:
+            provider_list.append({
+                "name": "Localhost",
+                "mode": "ipv4",
+                "addr": "127.7.7.7",
+                "port": 6590,
+            })
+
+        while True:
+            add_another_config = Yes_or_No("Would you like to add another provider?")
+            if not add_another_config: break
+            provider_list.append({
+                "name": input("Provider Name> "),
+                "mode": in_list("Provider Mode", ["ipv4", "ipv6", "blue"]),
+                "addr": input("Provider Address> "),
+                "port": is_int("Provider Port")
+            })
+
+        print("\n1.F.4 Networking (Cheatsheet) Rules: Hosting Configuration")
+        print("  Cheatsheet works compleatly fine without any hosting configurations on the client computer.")
+        print("\n  Also I, the creator have my own provider, would you like to add it to your provider list (it's sorta the defualt)?")
+
+        host_config_list = []
+
+        if add_localhost_provider:
+            host_config_list.append({
+                "name": "Localhost",
+                "mode": "ipv4",
+                "addr": "127.7.7.7",
+                "port": 6590,
+                "form_directory": save_directory
+            })
+        
+        while True:
+            add_another_config = Yes_or_No("Would you like to add another hosting config?")
+            if not add_another_config: break
+            provider_list.append({
+                "name": input("Config Name> "),
+                "mode": in_list("Config Mode", ["ipv4", "ipv6", "blue"]),
+                "addr": input("Config Address> "),
+                "port": is_int("Config Port"),
+                "form_directory": input("Form Storage Dirctory> ")
+            })  
+
+        config = {
+            "profiles": {
+                "defualt": {
+                    "profile_path": profile_path,
+                    "provided_email": email
+                }
+            },
+            "export": {
+                "on_error": error_mode,
+                "on_compleation": compleate_mode,
+                "export_dir": save_directory
+            },
+            "cheatsheet": {
+                "enabled": True,
+                "send_forms": True,
+                "recv_forms": True,
+                "providers": provider_list,
+                "hosting": host_config_list
             }
-        },
-        "export": {
-            "on_error": error_mode,
-            "on_compleation": compleate_mode,
-            "export_dir": "forms/"
         }
-    }
+
+    else:
+        print("Cool, if you ever want to change your mind look at config.json and CONFIG.md")
+        print("If your sure you absolutly don't want it you can delete cheatsheet.py and main.py will be compleatly unefected.")
+        config = {
+            "profiles": {
+                "defualt": {
+                    "profile_path": profile_path,
+                    "provided_email": email
+                }
+            },
+            "export": {
+                "on_error": error_mode,
+                "on_compleation": compleate_mode,
+                "export_dir": save_directory
+            },
+            "cheatsheet": {
+                "enabled": False,
+                "send_forms": False,
+                "recv_forms": False,
+                "providers": [],
+                "hosting": []
+            }
+        }
+    
+    with open("config.json", 'w') as f:
+        json.dump(config, f, indent=4)
+
 
 print("\nStep 2: Dependancy Setup.")
 print("2.A In order for Almighty to run, It relys on non-standard libary modules, This step will use `pip`, to install the python modules.")
 print("  Tip: it's advised to make sure you are connected to the internet.")
 
-while True: 
-    text = input("Install Dependencies? [y/N] ").lower()
-    if not text or text == 'n':
-        print("Aborting Setup...")
-        exit(-1)
-    if text == 'y': break
-    else: print("Input was not explicitly Y or N")
+if not Yes_or_No("Install Dependencies?"):
+    print("Aborting Setup...")
+    exit(-1)
 
 system("pip install -r requirements.txt") 
 if platform == "win32": system("pip install -r requirements.txt") # pip on windows sometimes errors out because of '.delete me' logic, so run it again
