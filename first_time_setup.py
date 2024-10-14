@@ -113,7 +113,7 @@ if not path.exists("config.json"):
             provider_list.append({
                 "name": "Formtress (Defualt)",
                 "mode": "ipv4",
-                "addr": "ipv4",
+                "addr": "129.146.72.147",
                 "port": 6590,
             })
 

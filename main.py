@@ -101,6 +101,9 @@ def gradent_str(text: str, color1: tuple[int, int, int], color2: tuple[int, int,
 ##
 
 def make_webdriver() -> tuple[webdriver.Firefox, dict[str, dict], dict[str, str]]:
+    """
+    Read the config.json, determin if we need to prompt the user to choose which profile, launch the firefox profile.
+    """
     global cheatsheet_available
     if not path.exists("config.json"): raise FileNotFoundError
     with open("config.json", 'r') as f:
@@ -160,6 +163,9 @@ def find_list(web_driver: webdriver.Firefox) -> tuple[wraped_element, wraped_ele
 ##
 
 def fillout_section(section_element: wraped_element, section: Section, profile: dict[str, str]):
+    """
+    This is the main function as to how the program fills out it's awnsers.
+    """
     for listitem in tqdm(section_element.find_elements(By.XPATH, '*'), colour = '#e942f5', unit='question', desc = 'fillout_section', leave=False):
         child_item = listitem.find_element(By.XPATH, "div")
         if listitem.get_dom_attribute("role") == "listitem":
@@ -201,9 +207,10 @@ def fillout_section(section_element: wraped_element, section: Section, profile: 
             else:
                 try: title_elm = child_item.find_element(By.XPATH, "div[1]/div[1]/div/span[1]")
                 except: continue
+                
                 if title_elm.text == "Email": # manual email entry
                     text_box = child_item.find_element(By.XPATH, "div[1]/div[2]/div[1]/div/div[1]/input")
-                    try: text_box.click()
+                    try: text_box.click() # This element exists on all sections however is hidden after the first, throwing an error.
                     except: continue
                     text_box.clear()
                     text_box.send_keys(profile["provided_email"])
@@ -214,22 +221,25 @@ def fillout_section(section_element: wraped_element, section: Section, profile: 
             #TODO: find the XPATH to the actual clickable area.
             clickable = listitem.find_element(By.XPATH, XPATH_LISTITEM_EMAIL_CHECK)
             clickable.click()
+
         else:
             print("Not a Question, don't know what it could be")
 
 def fillout_form(web_driver: webdriver.Firefox, form: Form, profile: dict[str, str]) -> tuple[tuple[int, int], wraped_element, wraped_element]:
-    # webdriver.find_element(By.)
-    i = 0
+    """
+    This is the function that gets every attempt after the first, Very simalar to first_time_scan
+    """
+    form_section_index = 0
     bar = tqdm(total = len(form.sections), colour = '#ffff00', unit='section', desc = 'fillout_form', leave=False)
     while True:
-        section = form.sections[i]
+        section = form.sections[form_section_index]
         section_element, root_tree = find_list(web_driver)
         fillout_section(section_element, section, profile)
         progression = progress(root_tree)
         # print(progression[1])
         bar.update(n=1)
         if progression[0]: break
-        i += 1
+        form_section_index += 1
     root_tree = make_root(web_driver)
     link_elm = root_tree.find_element(By.XPATH, XPATH_VIEW_RESULTS)
     link = link_elm.get_dom_attribute("href")
@@ -240,7 +250,10 @@ def fillout_form(web_driver: webdriver.Firefox, form: Form, profile: dict[str, s
     points = score_elm.text.split('/')
     return (int(points[0]), int(points[1])), section_element, root_tree
 
-def machine_learning(root_tree: wraped_element, form: Form): 
+def machine_learning(root_tree: wraped_element, form: Form):
+    """
+    This function parses the results section, and adjusts form to learn from these results
+    """ 
     section_containers = root_tree.find_element(By.XPATH, XPATH_RESULTS_SECTIONS)
     section_index = 0
     for section_container in section_containers.find_elements(By.XPATH, '*'):
@@ -328,6 +341,9 @@ def machine_learning(root_tree: wraped_element, form: Form):
             section_index += 1
     
 def scan_listitem(web_element: wraped_element, section: Section):
+    """
+    This function reads an html element, Parses out what type of question it is then adds it to section
+    """
     child_item = web_element.find_element(By.XPATH, "div")
     if web_element.get_dom_attribute("role") == "listitem":
         data_pram_str = child_item.get_dom_attribute("data-params")
@@ -352,11 +368,11 @@ def scan_listitem(web_element: wraped_element, section: Section):
             elif question_type == 1: # Long Str
                 question = LongTextQuestion(question_name, question_required, question_point_value)
             
-            elif question_type == 2:
+            elif question_type == 2: # Multiple Choice
                 awnsers = [values[0] for values in data_pram_json[0][4][0][1]]
                 question = MultipleChoiceQuestion(question_name, question_required, question_point_value, awnsers)
             
-            elif question_type == 4:
+            elif question_type == 4: # Checkboxes
                 awnsers = [values[0] for values in data_pram_json[0][4][0][1]]
                 question = CheckboxQuestion(question_name, question_required, question_point_value, awnsers)
             
@@ -373,6 +389,9 @@ def scan_listitem(web_element: wraped_element, section: Section):
         print("Not a Question, don't know what it could be")
 
 def progress(root_tree: wraped_element) -> tuple[bool, tuple[int, int]]:
+    """
+    Clicks the Submit or Next buttons at the bottom of the form.
+    """
     parent = root_tree.find_element(By.XPATH, XPATH_ROOT_STATUS)
     progress_val = (0,0)
     if len(parent.find_elements(By.XPATH, '*')) == 3:
@@ -394,46 +413,56 @@ def progress(root_tree: wraped_element) -> tuple[bool, tuple[int, int]]:
     raise ValueError("Unable to find the path for progression")
 
 def first_time_scan(web_driver: webdriver.Firefox, cfg: dict[str, dict], profile: dict[str, str]) -> tuple[Form, tuple[int, int], wraped_element]:
-    form = Form()
-    i = 0
-    while True:
-        section_element, root_tree = find_list(web_driver)
-        section = Section("Root")
-        for child_element in section_element.find_elements(By.XPATH, '*'):
-            scan_listitem(child_element, section)
-        form.sections.append(section)
-        if is_last_page(root_tree):
+    """
+    This is the function that gets call the first time attempt after punching in the URL.
+    """
+    form = Form() # Blank Template Form
+    form_section_index = 0
+    while True: #While The end of the form isn't now
+        section_element, root_tree = find_list(web_driver) # Read the html of the form
+        section = Section("Root") # Create an new form section
+        for child_element in section_element.find_elements(By.XPATH, '*'): #For every element in the section.
+            scan_listitem(child_element, section) # Scan it (Parse it and add it to the section.)
+        form.sections.append(section) #Add New Scanned Section to Form.
+        
+        if is_last_page(root_tree): # Look ahead, is this the last section to the form?
             print("Searching for .form for this... ", end="")
-            new_form = search_for_forms(form, cfg)
-            if new_form != None:
+            new_form = search_for_forms(form, cfg) # Search for form awnser keys (Can be from disk or from cheatsheet)
+            if new_form != None: # We found a form!
                 print("Search suceeded,\nChecking if restart needs to be done... ", end="")
-                if restart_needed(new_form, form, i):
+                if restart_needed(new_form, form, form_section_index): # Does the new form modify our awnsers at all for preivous sections?
                     print("Restart needed.", end="")
-                    restart_form(root_tree)
+                    restart_form(root_tree) # Reset the form data
                     return new_form, None, None # type: ignore
                 else: print("Restart Not needed.")
-                form = new_form
-                section = new_form.sections[i]
-            else: print("None found.")
+                form = new_form # set mem address of form to new_form.
+                section = new_form.sections[form_section_index] # set current section mem address to new_form's updated copy of that version
             
-        fillout_section(section_element, section, profile)
-        progression = progress(root_tree)
-        # print(progression[1])
-        if progression[0]: break
-        i+=1
-    # form.print_form()
+            else: 
+                print("None found.") # Drats!
+            
+        fillout_section(section_element, section, profile) # Go through the form and awnser this section
+        progression = progress(root_tree) # Click the "Next" or "Submit" Button
+        
+        if progression[0]: break # if the Submit Button was pressed.
+        form_section_index += 1
+    
+    # Get the results URL and go there.
     root_tree = make_root(web_driver)
     link_elm = root_tree.find_element(By.XPATH, XPATH_VIEW_RESULTS)
     link = link_elm.get_dom_attribute("href")
     web_driver.get(link)
     
-    #get the score
+    # Read the score
     root_tree = make_root(web_driver)
     score_elm = web_driver.find_element(By.XPATH, XPATH_RESULTS_SCORE)
     points = score_elm.text.split('/')
     return form, (int(points[0]), int(points[1])), root_tree
 
 def is_last_page(root_tree: wraped_element):
+    """
+    Checks if "Submit" is on one of the buttons in on the end of the form
+    """
     parent = root_tree.find_element(By.XPATH, XPATH_ROOT_STATUS)
     button_container = parent.find_element(By.XPATH, "div[1]")
     for button in button_container.find_elements(By.XPATH, '*'):
@@ -443,8 +472,11 @@ def is_last_page(root_tree: wraped_element):
     return False
 
 def restart_form(root_tree: wraped_element):
-    parent = root_tree.find_element(By.XPATH, XPATH_ROOT_STATUS)
-    reset_container = parent.find_elements(By.XPATH, "div")[-1]
+    """
+    Goes through the motions of reseting a form
+    """
+    status_container = root_tree.find_element(By.XPATH, XPATH_ROOT_STATUS)
+    reset_container = status_container.find_elements(By.XPATH, "div")[-1]
     reset_container.find_element(By.XPATH, "div")
     reset_container.click()
     root_tree = make_root(root_tree.web_driver)
@@ -457,6 +489,9 @@ def restart_form(root_tree: wraped_element):
 ##
 
 def search_for_forms(form: Form, cfg: dict[str, dict]) -> Form | None:
+    """
+    Scan Local files and (if enabled) ask cheatsheet providers
+    """
     try:
         name = hash_form(form)
         fp = cfg["export"]["export_dir"] + name + ".form"
@@ -473,6 +508,9 @@ def search_for_forms(form: Form, cfg: dict[str, dict]) -> Form | None:
     except: return None
 
 def restart_needed(form_new: Form, form_old: Form, section_index: int) -> bool:
+    """
+    Double check that the new form doesn't have any new awnsers to questions we have awnsered.
+    """
     assert hash_form(form_new) == hash_form(form_old), "Forms are not the same"
     for i in range(section_index - 1):
         new_section = form_new.sections[i]
@@ -503,8 +541,11 @@ def restart_needed(form_new: Form, form_old: Form, section_index: int) -> bool:
 def main():
     term_init()
     display_logo()
+    
     url = input("formURL> ")
+    
     print(f"\"{gradent_str('Gaze upon my Works, ye Mighty, and despair!', (0,255,0), (0,255,255))}\"") # Epic, quote from a poem, then from a game refrencing the poem.
+   
     try: web_driver, config, profile = make_webdriver()
     except FileNotFoundError: 
         print("config.json not found, please make sure that you have ran the setup script.")
@@ -538,9 +579,12 @@ def main_loop(web_driver: webdriver.Firefox, url: str, cfg: dict[str, dict], pro
             web_driver.get(url)
             score, _, root_tree = fillout_form(web_driver, form, profile)
             score_bar.update(n=score[0] - score_bar.n)
+    
     except:
         web_driver.close()
         export(form, cfg["export"]["on_error"], cfg["export"]["export_dir"], "error")
+        return
+    
     web_driver.close()
     export(form, cfg["export"]["on_compleation"], cfg["export"]["export_dir"], "compleation")
     if cheatsheet_available:

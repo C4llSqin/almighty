@@ -1,11 +1,18 @@
 import asyncio
 import socket
-from os import path
+from os import path, listdir
 from hashlib import sha1
 from formLogic import Form, export, strip_form, hash_form, combine_form
 from functools import wraps
 import io
 import json
+import random
+
+def log_brackets(text: str, bracket_text: list[str]):
+    print(" ".join([f"[{bracket}]" for bracket in bracket_text]) + text)
+
+def cheat_print(text: str, add_brackets: list[str], output: bool):
+    if output: log_brackets(text, ["cheatsheet"] + add_brackets)
 
 ##
 # Basic socket networking
@@ -86,84 +93,117 @@ def merge_forms(directory: str, form_hash: str, new_form: Form):
     combine_form(current_form, new_form)
     return current_form
 
+def list_hashes(dir_path: str):
+    return [fname.removesuffix(".form") for fname in listdir(dir_path)]
+
 class cheatsheet_server():
-    def __init__(self, host: socket.socket, directory: str) -> None:
+    def __init__(self, host: socket.socket, name: str, directory: str, output: bool = True) -> None:
         host.setblocking(False)
         self.host = host
+        self.name = name
         self.directory = directory
-        self.tasks: list[asyncio.Task] = []
+        self.tasks: dict[int, asyncio.Task] = {}
+        self.output = output
 
-    async def handle_client(self, handle: socket.socket):
-        while True:
-            instruction = await async_recv(handle)
-            
-            if instruction == b"RETRIVE":
-                form_hash = await async_recv(handle)
-                fp = f"{self.directory}{form_hash.decode()}.form"
-                if path.exists(fp):
-                    data = await asyncio.to_thread(read_file, fp)
-                    filehash = sha1(data).hexdigest()
-                    await async_send(handle, filehash.encode())
-                    recv_instruction = await async_recv(handle)
-                    if recv_instruction == b"SEND":
-                        await async_send(handle, data)
-                    else: 
-                        await async_send(handle, b"ABORTED")
+    async def handle_client(self, handle: socket.socket, addr, num_id: int):
+        hex_id = hex(num_id)[2:]
+        cheat_print(f"New Connection {addr}", ["server", self.name, hex_id], self.output)
+        try:
+            while True:
+                instruction = await async_recv(handle)
                 
-                else:
-                    await async_send(handle, b"NOTFOUND")
-            
-            elif instruction == b"STORE":
-                form_hash = await async_recv(handle)
-                fp = f"{self.directory}{form_hash.decode()}.form"
-                if path.exists(fp):
-                    await async_send(handle, b"HASH")
-                    sender_hash = await async_recv(handle)
-                    data = await asyncio.to_thread(read_file, fp)
-                    file_hash = sha1(data).hexdigest().encode()
-                    if sender_hash == file_hash:
-                        await async_send(handle, b"IDENTICAL")
+                if instruction == b"RETRIVE":
+                    form_hash = await async_recv(handle)
+                    form_hash = form_hash.decode()
+                    fp = f"{self.directory}{form_hash}.form"
+                    if path.exists(fp):
+                        cheat_print(f"Client requested {form_hash}, which exists", ["server", self.name, hex_id, "RETRIVE"], self.output)
+                        data = await asyncio.to_thread(read_file, fp)
+                        filehash = sha1(data).hexdigest()
+                        await async_send(handle, filehash.encode())
+                        recv_instruction = await async_recv(handle)
+                        if recv_instruction == b"SEND":
+                            cheat_print(f"Client wants to proceed with {form_hash}... sending", ["server", self.name, hex_id, "RETRIVE"], self.output)
+                            await async_send(handle, data)
+                        else:
+                            cheat_print(f"Client aborted with {form_hash}", ["server", self.name, hex_id, "RETRIVE"], self.output)
+                            await async_send(handle, b"ABORTED")
+                    
+                    else:
+                        cheat_print(f"Client requested {form_hash}, which doesn't exist", ["server", self.name, hex_id, "RETRIVE"], self.output)
+                        await async_send(handle, b"NOTFOUND")
+                
+                elif instruction == b"STORE":
+                    form_hash = await async_recv(handle)
+                    fp = f"{self.directory}{form_hash.decode()}.form"
+                    if path.exists(fp):
+                        cheat_print(f"Client wants to send {form_hash} but it exists... asking for its hash.", ["server", self.name, hex_id, "STORE"], self.output)
+                        await async_send(handle, b"HASH")
+                        sender_hash = await async_recv(handle)
+                        data = await asyncio.to_thread(read_file, fp)
+                        file_hash = sha1(data).hexdigest().encode()
+                        if sender_hash == file_hash:
+                            cheat_print("Client wanted to send an identical file", ["server", self.name, hex_id, "STORE"], self.output)
+                            await async_send(handle, b"IDENTICAL")
+                        else:
+                            cheat_print("Client sent unique hash... proceeding with file sending", ["server", self.name, hex_id, "STORE"], self.output)
+                            await async_send(handle, b"SEND")
+                            data = await async_recv(handle)
+                            if sha1(data).hexdigest().encode() != sender_hash:
+                                cheat_print("Client sent hash that doesn't repesent the data", ["server", self.name, hex_id, "STORE"], self.output)
+                                await async_send(handle, b"HASHFAIL")
+                            else:
+                                vaild_data, valid_form = validate(form_hash, data)
+                                if vaild_data[0]:
+                                    cheat_print("Client sent valid form... merging", ["server", self.name, hex_id, "STORE"], self.output)
+                                    assert valid_form != None
+                                    form = await asyncio.to_thread(merge_forms, *(self.directory, form_hash.decode(), valid_form))
+                                    form_file = io.BytesIO(b"")
+                                    form.export(form_file)
+                                    form_file.seek(0)
+                                    vaild_data = form_file.read()
+                                    await async_send(handle, b"GOOD")
+                                    await asyncio.to_thread(write_file, fp, vaild_data)
+                                else: 
+                                    cheat_print("Client sent invalid form data", ["server", self.name, hex_id, "STORE"], self.output)
+                                    await async_send(handle, b"INVALID")
+
                     else:
                         await async_send(handle, b"SEND")
                         data = await async_recv(handle)
-                        if sha1(data).hexdigest().encode() != sender_hash:
-                            await async_send(handle, b"HASHFAIL")
-                        else:
-                            vaild_data, valid_form = validate(form_hash, data)
-                            if vaild_data[0]:
-                                assert valid_form != None
-                                form = await asyncio.to_thread(merge_forms, *(self.directory, form_hash.decode(), valid_form))
-                                form_file = io.BytesIO(b"")
-                                form.export(form_file)
-                                form_file.seek(0)
-                                vaild_data = form_file.read()
-                                await async_send(handle, b"GOOD")
-                                await asyncio.to_thread(write_file, fp, vaild_data)
-                            else: await async_send(handle, b"INVALID")
+                        vaild_data, form = validate(form_hash, data)
+                        if vaild_data:
+                            cheat_print("Client sent valid form...", ["server", self.name, hex_id, "STORE"], self.output)
+                            await async_send(handle, b"GOOD")
+                            await asyncio.to_thread(write_file, fp, vaild_data)
+                        else: 
+                            cheat_print("Client sent invalid form data", ["server", self.name, hex_id, "STORE"], self.output)
+                            await async_send(handle, b"INVALID")
+
+                elif instruction == b"LIST":
+                    await async_send(handle, "#".join(list_hashes(self.directory)).encode())
 
                 else:
-                    await async_send(handle, b"SEND")
-                    data = await async_recv(handle)
-                    vaild_data, form = validate(form_hash, data)
-                    if vaild_data:
-                        await async_send(handle, b"GOOD")
-                        await asyncio.to_thread(write_file, fp, vaild_data)
-                    else: await async_send(handle, b"INVALID")
+                    cheat_print("Client sent invalid command form...", ["server", self.name, hex_id, "STORE"], self.output)
 
-            else:
-                await async_send(handle, b"INVALID")
+                    await async_send(handle, b"INVALID")
+        
 
-    async def remove_from_tasks(self, task):
-        self.tasks.remove(task)
+
+        except Exception as e:
+            cheat_print(f"Dropping client: {e}", ["server", self.name, hex_id], self.output)
+            del self.tasks[num_id]
 
     async def run(self):
         loop = asyncio.get_event_loop()
         while True:
-            handle, _ = await loop.sock_accept(self.host)
+            handle, addr = await loop.sock_accept(self.host)
             handle.setblocking(False)
-            task = asyncio.create_task(self.handle_client(handle))
+            handle_id = random.randint(0, max_file_size)
+            task = asyncio.create_task(self.handle_client(handle, addr, handle_id))
+            while handle_id in self.tasks: task = asyncio.create_task(self.handle_client(handle, addr, handle_id))
             # task.add_done_callback(asyncio.create_task(self.remove_from_tasks(task)))
-            self.tasks.append(task)
+            self.tasks[handle_id] = task
 
 
 async def _aquire_form(form_hash: str, handle: socket.socket, cur_hash: bytes = b"") -> Form | None:
@@ -319,7 +359,7 @@ async def host_server(provider_information: dict[str, str | int], output=True):
     try:
         host = await init_provider(provider_information, output=False, connect=False)
         if output: print("Ready")
-        srvr = cheatsheet_server(host, provider_information["form_directory"]) #type: ignore
+        srvr = cheatsheet_server(host, provider_information['name'], provider_information["form_directory"]) #type: ignore
         await srvr.run()
     except:
         if output: print("Failure")
