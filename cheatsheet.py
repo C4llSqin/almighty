@@ -1,4 +1,3 @@
-#!/bin/python3
 import asyncio
 import socket
 from os import path, listdir
