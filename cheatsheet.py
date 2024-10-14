@@ -111,7 +111,8 @@ class cheatsheet_server():
         try:
             while True:
                 instruction = await async_recv(handle)
-                
+                if instruction == b"":
+                    raise IOError("Connection Lost")
                 if instruction == b"RETRIVE":
                     form_hash = await async_recv(handle)
                     form_hash = form_hash.decode()
@@ -192,6 +193,7 @@ class cheatsheet_server():
 
         except Exception as e:
             cheat_print(f"Dropping client: {e}", ["server", self.name, hex_id], self.output)
+            handle.close()
             del self.tasks[num_id]
 
     async def run(self):
