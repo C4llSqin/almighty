@@ -9,7 +9,7 @@ import json
 import random
 
 def log_brackets(text: str, bracket_text: list[str]):
-    print(" ".join([f"[{bracket}]" for bracket in bracket_text]) + text)
+    print(" ".join([f"[{bracket}]" for bracket in bracket_text]) + " " + text)
 
 def cheat_print(text: str, add_brackets: list[str], output: bool):
     if output: log_brackets(text, ["cheatsheet"] + add_brackets)
